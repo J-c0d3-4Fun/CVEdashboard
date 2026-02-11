@@ -9,6 +9,7 @@ import (
 
 	"cvedashboard2.0/parser"
 	"cvedashboard2.0/storage"
+	"cvedashboard2.0/structs"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,6 +27,13 @@ func NewClient() *Client {
 		},
 		baseUrl:     "https://services.nvd.nist.gov/rest/json/cves/2.0/",
 		rateLimiter: time.NewTicker(5 * time.Second),
+	}
+}
+
+func NewClientGithub() *Client {
+	return &Client{
+		Clients: &http.Client{},
+		baseUrl: "https://api.github.com/advisories",
 	}
 }
 
@@ -64,12 +72,39 @@ func (c *Client) FetchCVEs(ctx context.Context, startIndex, resultsPerPage int) 
 	return body, nil
 }
 
+func (c *Client) FetchGithubAdvisories(ctx context.Context) ([]byte, error) {
+
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseUrl, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.Clients.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch CVEs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check status code
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll((resp.Body))
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	return body, nil
+}
+
 func main() {
 	api := gin.Default()
 
 	// Setup the routes
 	// api.GET("/vulns", getVulns)
-	api.GET("/vulnerabilities", getVulns)
+	api.GET("/nvd", getVulns)
+	api.GET("/github", getVulnsGithub)
 	// !FIXME
 	// api.GET("/timestamp", getTime)
 
@@ -99,7 +134,7 @@ func getVulns(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	b, err := parser.Unmarshal(a)
+	b, err := parser.Unmarshal[structs.NvdJson](a)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -109,7 +144,7 @@ func getVulns(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	l := j.InsertVulnData(&b)
+	l := j.InsertVulnDataNVD(&b)
 	if l != nil {
 		fmt.Print(l.Error())
 	}
@@ -135,19 +170,44 @@ func getVulns(c *gin.Context) {
 	c.JSON(http.StatusOK, i)
 }
 
-// !FIXME
-// func getTime(c *gin.Context) {
-
-// 	a, err := NewClient().FetchCVEs(c.Request.Context(), 1, 10)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-// 		return
-// 	}
-// 	b, err := parser.Unmarshal(a)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-// 		return
-// 	}
-// 	d := data.GetTimeStamp(b)
-// 	c.JSON(http.StatusOK, d)
-// }
+func getVulnsGithub(c *gin.Context) {
+	a, err := NewClientGithub().FetchGithubAdvisories(context.Background())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	b, err := parser.Unmarshal[[]structs.GithubJson](a)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	j, err := storage.Connect()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	l := j.InsertVulnDataGithub(b)
+	if l != nil {
+		fmt.Print(l.Error())
+	}
+	err1 := j.Close()
+	if err1 != nil {
+		fmt.Print(err1.Error())
+	}
+	d, err := storage.Connect()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	i, err := d.ReadGithub()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	k := d.Close()
+	if k != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, i)
+}

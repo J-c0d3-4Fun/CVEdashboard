@@ -31,13 +31,23 @@ Delete()
 First Table Vulnerabilities
 */
 
-type DBVulnerability struct {
+type DBVulnerabilityNVD struct {
 	CVEID            string
 	SourceIdentifier string
 	Published        string
 	LastModified     string
 	Description      string
 	BaseScore        float64
+}
+type DBVulnerabilityGithub struct {
+	GHSAID      string
+	CVEID       string
+	Identifier  string
+	Published   string
+	Summary     string
+	Description string
+	Severity    string
+	Type        string
 }
 
 type DB struct {
@@ -58,7 +68,7 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
-func (db *DB) InsertVulnData(data *structs.NvdJson) error {
+func (db *DB) InsertVulnDataNVD(data *structs.NvdJson) error {
 	for _, v := range data.Vulnerabilities {
 		desc := ""
 		if len(v.Cve.Descriptions) > 0 {
@@ -83,18 +93,59 @@ func (db *DB) InsertVulnData(data *structs.NvdJson) error {
 	return nil
 }
 
-func (db *DB) Read() ([]DBVulnerability, error) {
+func (db *DB) InsertVulnDataGithub(data []structs.GithubJson) error {
+	for _, v := range data {
+		identifier := ""
+		if len(v.Identifiers) > 0 {
+			identifier = v.Identifiers[0].Value
+		}
+		_, err := db.conn.Exec(
+			`INSERT OR REPLACE INTO GithubAdvisories 
+			(ghsa_id, cve_id, identifier, published, summary, description, severity, type) 
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			v.GhsaID, v.CveID, identifier, v.PublishedAt,
+			v.Summary, v.Description, v.Severity, v.Type,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert %s: %w", v.GhsaID, err)
+		}
+	}
+	return nil
+}
+
+func (db *DB) Read() ([]DBVulnerabilityNVD, error) {
 	rows, err := db.conn.Query("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer rows.Close()
 
-	var results []DBVulnerability
+	var results []DBVulnerabilityNVD
 
 	for rows.Next() {
-		var v DBVulnerability
+		var v DBVulnerabilityNVD
 		err := rows.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		if err != nil {
+			log.Fatal(err)
+		}
+		results = append(results, v)
+	}
+	return results, rows.Err()
+}
+
+func (db *DB) ReadGithub() ([]DBVulnerabilityGithub, error) {
+	// COALESCE(cve_id, '') checks for null or no value
+	rows, err := db.conn.Query("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	var results []DBVulnerabilityGithub
+
+	for rows.Next() {
+		var v DBVulnerabilityGithub
+		err := rows.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
 		if err != nil {
 			log.Fatal(err)
 		}
