@@ -13,20 +13,14 @@ type ParseData struct {
 	TotalResults int
 }
 
-func Unmarshal(data []byte) (structs.NvdJson, error) {
-	var report structs.NvdJson
+// type parameter , allows me to return the same type of any
+
+func Unmarshal[T any](data []byte) (T, error) {
+	var report T
 	if err := json.Unmarshal(data, &report); err != nil {
-		return structs.NvdJson{}, fmt.Errorf("error unmarshaling: %w", err)
+		return report, fmt.Errorf("error unmarshaling: %w", err)
 	}
 	return report, nil
-}
-func Response(responseData *structs.NvdJson) []*structs.NvdJson {
-	var allResponses []*structs.NvdJson
-
-	for i := 0; i < responseData.TotalResults; i++ {
-		allResponses = append(allResponses, responseData)
-	}
-	return allResponses
 }
 
 // !FIXME
