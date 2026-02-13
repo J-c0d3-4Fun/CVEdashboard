@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"cvedashboard2.0/parser"
@@ -23,17 +24,20 @@ type Client struct {
 func NewClient() *Client {
 	return &Client{
 		Clients: &http.Client{
-			Timeout: 6 * time.Second,
+			Timeout: 30 * time.Second,
 		},
 		baseUrl:     "https://services.nvd.nist.gov/rest/json/cves/2.0/",
-		rateLimiter: time.NewTicker(5 * time.Second),
+		rateLimiter: time.NewTicker(1 * time.Second),
 	}
 }
 
 func NewClientGithub() *Client {
 	return &Client{
-		Clients: &http.Client{},
-		baseUrl: "https://api.github.com/advisories",
+		Clients: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		baseUrl:     "https://api.github.com/advisories",
+		rateLimiter: time.NewTicker(1 * time.Second),
 	}
 }
 
@@ -52,7 +56,8 @@ func (c *Client) FetchCVEs(ctx context.Context, startIndex, resultsPerPage int) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-
+	apiKey := os.Getenv("API_KEY")
+	req.Header.Set("apiKey", apiKey)
 	resp, err := c.Clients.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch CVEs: %w", err)
@@ -102,14 +107,48 @@ func main() {
 	api := gin.Default()
 
 	// Setup the routes
-	// api.GET("/vulns", getVulns)
+
 	api.GET("/nvd", getVulns)
 	api.GET("/github", getVulnsGithub)
+	api.GET("/nvd/search", SearchNVD)
 	// !FIXME
-	// api.GET("/timestamp", getTime)
+
+	go syncNVDData()
 
 	api.Run(":8080")
 
+}
+
+func syncNVDData() {
+	client := NewClient()
+	startIndex := 0
+	for {
+		body, err := client.FetchCVEs(context.Background(), startIndex, 2000)
+		if err != nil {
+			fmt.Printf("fetch error at index %d: %v\n", startIndex, err)
+			break
+		}
+		data, err := parser.Unmarshal[structs.NvdJson](body)
+		if err != nil {
+			fmt.Printf("unmarshal error: %v\n", err)
+			break
+		}
+		db, err := storage.Connect()
+		if err != nil {
+			fmt.Printf("db connect error: %v\n", err)
+			break
+		}
+		if err := db.InsertVulnDataNVD(&data); err != nil {
+			fmt.Printf("insert error: %v\n", err)
+		}
+		db.Close()
+		fmt.Printf("synced %d/%d\n", startIndex+len(data.Vulnerabilities), data.TotalResults)
+		startIndex += 2000
+		if startIndex >= data.TotalResults {
+			break
+		}
+	}
+	fmt.Println("NVD sync complete")
 }
 
 // Handlers
@@ -210,4 +249,16 @@ func getVulnsGithub(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, i)
+}
+
+func SearchNVD(c *gin.Context) {
+	service := c.Query("service")
+	d, err := storage.Connect()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	results, err := d.FilterRequestNVD(service)
+	c.JSON(http.StatusOK, results)
+
 }

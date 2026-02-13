@@ -78,6 +78,16 @@ func (db *DB) InsertVulnDataNVD(data *structs.NvdJson) error {
 		if len(v.Cve.Metrics.CvssMetricV2) > 0 {
 			baseScore = v.Cve.Metrics.CvssMetricV2[0].CvssData.BaseScore
 		}
+		for _, config := range v.Cve.Configurations {
+			for _, node := range config.Nodes {
+				for _, cpe := range node.CpeMatch {
+					db.conn.Exec(
+						`INSERT OR REPLACE INTO AffectedProducts (cve_id, criteria, vulnerable) VALUES (?, ?, ?)`,
+						v.Cve.ID, cpe.Criteria, cpe.Vulnerable,
+					)
+				}
+			}
+		}
 
 		_, err := db.conn.Exec(
 			`INSERT OR REPLACE INTO Vulnerabilities 
@@ -152,4 +162,27 @@ func (db *DB) ReadGithub() ([]DBVulnerabilityGithub, error) {
 		results = append(results, v)
 	}
 	return results, rows.Err()
+}
+
+func (db *DB) FilterRequestNVD(filter string) ([]DBVulnerabilityNVD, error) {
+	var result []DBVulnerabilityNVD
+	rows, err := db.conn.Query(`SELECT v.cve_id, v.source_identifier, v.published, v.last_modified, v.description, v.base_score 
+         FROM Vulnerabilities v
+         JOIN AffectedProducts ap ON v.cve_id = ap.cve_id
+         WHERE ap.criteria LIKE ?`, "%"+filter+"%")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var v DBVulnerabilityNVD
+		err := rows.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		if err != nil {
+			log.Fatal(err)
+		}
+		result = append(result, v)
+	}
+	return result, rows.Err()
+
 }
