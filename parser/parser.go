@@ -23,16 +23,6 @@ func Unmarshal[T any](data []byte) (T, error) {
 	return report, nil
 }
 
-// !FIXME
-// func GetTimeStamp(time []*structs.NvdJson) []string {
-// 	var timestamps []string
-// 	for _, d := range time {
-// 		timestamps = append(timestamps, d.Timestamp)
-// 	}
-
-// 	return timestamps
-// }
-
 func GetVulnID(vuln []*structs.NvdJson) []string {
 
 	var ids []string
@@ -46,26 +36,3 @@ func GetVulnID(vuln []*structs.NvdJson) []string {
 	return ids
 
 }
-
-// !FIXME
-// func GetVulnTags(vuln *structs.NvdJson) []string {
-// 	var ids []string
-// 	for _, v := range vuln.Vulnerabilities {
-// 		ids = append(ids, v.Cve.CveTags)
-// 	}
-
-// 	return ids
-
-// }
-
-// !FIXME
-
-// func GetVulnDescription(vuln *structs.NvdJson) []string {
-// 	var ids []string
-// 	for _, v := range vuln.Vulnerabilities {
-// 		ids = append(ids, v.Cve.D)
-// 	}
-
-// 	return ids
-
-// }
