@@ -2,18 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"cvedashboard2.0/middleware"
 	"cvedashboard2.0/parser"
 	"cvedashboard2.0/storage"
 	"cvedashboard2.0/structs"
-
-	"github.com/gin-gonic/gin"
 )
 
 type Client struct {
@@ -125,21 +126,36 @@ func parseNextLink(linkHeader string) string {
 }
 
 func main() {
-	api := gin.Default()
+	// api := gin.Default()
+	port := ":8081"
+	// // Setup the routes
+	// api.GET("/", homePage)
+	// api.GET("/nvd", getVulns)
+	// api.GET("/github", getVulnsGithub)
+	// api.GET("/nvd/search", SearchNVD)
+	// api.GET("/github/search", SearchGithub)
 
-	// Setup the routes
+	// Testing out manually writing the function
+	http.HandleFunc("GET /github", getVulnsGithub)
+	http.HandleFunc("GET /github/search", SearchGithub)
+	http.HandleFunc("GET /nvd", getVulns)
+	http.HandleFunc("GET /nvd/search", SearchNVD)
+	http.HandleFunc("GET /", homePage)
+	log.Println("Listening and serving HTTP on", port)
 
-	api.GET("/", homePage)
-	api.GET("/nvd", getVulns)
-	api.GET("/github", getVulnsGithub)
-	api.GET("/nvd/search", SearchNVD)
-	api.GET("/github/search", SearchGithub)
+	pathLogging := middleware.PathLogging(http.DefaultServeMux)
 
 	go syncNVDData()
 	go syncGithubData()
-	api.Run(":8080")
+
+	// everything must be before this line or it will not run
+	log.Fatal(http.ListenAndServe(port, pathLogging))
+
+	// api.Run(":8080")
 
 }
+
+// Testing new handlers:
 
 func syncNVDData() {
 	client := NewClient()
@@ -228,133 +244,119 @@ func syncGithubData() {
 // 	c.JSON(http.StatusOK, b)
 // }
 
-func getVulns(c *gin.Context) {
-	a, err := NewClient().FetchCVEs(c.Request.Context(), 1, 100)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	b, err := parser.Unmarshal[structs.NvdJson](a)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	j, err := storage.Connect()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	l := j.InsertVulnDataNVD(&b)
-	if l != nil {
-		fmt.Print(l.Error())
-	}
-	err1 := j.Close()
-	if err1 != nil {
-		fmt.Print(err1.Error())
-	}
+func getVulns(w http.ResponseWriter, r *http.Request) {
+
 	d, err := storage.Connect()
+	log.Println("Connecting to DB......")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	i, err := d.Read()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	k := d.Close()
-	if k != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	defer d.Close()
+	if err != nil {
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, i)
+	WriteJSON(w, http.StatusOK, i)
 }
 
-func getVulnsGithub(c *gin.Context) {
-	a, _, err := NewClientGithub().FetchGithubAdvisories(context.Background(), "")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	b, err := parser.Unmarshal[[]structs.GithubJson](a)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	j, err := storage.Connect()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	l := j.InsertVulnDataGithub(b)
-	if l != nil {
-		fmt.Print(l.Error())
-	}
-	err1 := j.Close()
-	if err1 != nil {
-		fmt.Print(err1.Error())
-	}
+func getVulnsGithub(w http.ResponseWriter, r *http.Request) {
+
 	d, err := storage.Connect()
+	log.Println("Connecting to DB......")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	i, err := d.ReadGithub()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	k := d.Close()
-	if k != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, i)
+	defer d.Close()
+
+	WriteJSON(w, http.StatusOK, i)
+
 }
 
-func SearchNVD(c *gin.Context) {
-	service := c.Query("service")
+func WriteJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+
+	w.WriteHeader(status)
+
+	err := json.NewEncoder(w).Encode(data)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+func ErrorHandler(w http.ResponseWriter, status int, msg string) {
+	WriteJSON(w, status, map[string]any{"[ERROR]": msg})
+}
+
+func SearchNVD(w http.ResponseWriter, r *http.Request) {
+	service := r.URL.Query().Get("service")
+	log.Println("Connecting to DB......")
 	d, err := storage.Connect()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer d.Close()
 	results, err := d.FilterRequestNVD(service)
-	c.JSON(http.StatusOK, results)
+	WriteJSON(w, http.StatusOK, results)
 
 }
 
-func SearchGithub(c *gin.Context) {
-	advisory := c.Query("advisory")
+func SearchGithub(w http.ResponseWriter, r *http.Request) {
+	advisory := r.URL.Query().Get("advisory")
+	log.Println("Connecting to DB......")
 	d, err := storage.Connect()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer d.Close()
 	results, err := d.FilterRequestGithub(advisory)
-	c.JSON(http.StatusOK, results)
+
+	WriteJSON(w, http.StatusOK, results)
+
 }
 
-func homePage(c *gin.Context) {
+func homePage(w http.ResponseWriter, r *http.Request) {
 	d, err := storage.Connect()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer d.Close()
-	githubResult, err := d.ReadGithub()
+	githubResult, err := d.ReadHomepageGithub()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	nvdResult, err := d.Read()
+	nvdResult, err := d.ReadHomepageNVd()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"nvd":    nvdResult,
-		"github": githubResult,
-	})
+	WriteJSON(w, http.StatusOK, githubResult)
+	WriteJSON(w, http.StatusOK, nvdResult)
+
 }

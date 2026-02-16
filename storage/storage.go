@@ -175,6 +175,47 @@ func (db *DB) ReadGithub() ([]DBVulnerabilityGithub, error) {
 	return results, rows.Err()
 }
 
+func (db *DB) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
+	rows, err := db.conn.Query("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories LIMIT 30")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	var results []DBVulnerabilityGithub
+
+	for rows.Next() {
+		var v DBVulnerabilityGithub
+		err := rows.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
+		if err != nil {
+			log.Fatal(err)
+		}
+		results = append(results, v)
+	}
+	return results, rows.Err()
+
+}
+
+func (db *DB) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
+	rows, err := db.conn.Query("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities LIMIT 30")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	var results []DBVulnerabilityNVD
+
+	for rows.Next() {
+		var v DBVulnerabilityNVD
+		err := rows.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		if err != nil {
+			log.Fatal(err)
+		}
+		results = append(results, v)
+	}
+	return results, rows.Err()
+}
+
 func (db *DB) FilterRequestNVD(filter string) ([]DBVulnerabilityNVD, error) {
 	var result []DBVulnerabilityNVD
 	rows, err := db.conn.Query(`SELECT v.cve_id, v.source_identifier, v.published, v.last_modified, v.description, v.base_score 
