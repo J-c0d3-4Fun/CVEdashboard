@@ -61,6 +61,9 @@ func Connect() (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	// WAL mode lets readers and writers operate concurrently on SQLite
+	// was having issues witht eh goroutines trying to write to Db at the same time
+	conn.Exec("PRAGMA journal_mode=WAL")
 	return &DB{conn: conn}, nil
 }
 
@@ -109,11 +112,19 @@ func (db *DB) InsertVulnDataGithub(data []structs.GithubJson) error {
 		if len(v.Identifiers) > 0 {
 			identifier = v.Identifiers[0].Value
 		}
+
+		for _, vulns := range v.Vulnerabilities {
+			_, err := db.conn.Exec(`INSERT OR REPLACE INTO AffectedAdvisories (ghsa_id, packageName, packageEco) VALUES (?, ?, ?)`, v.GhsaID, vulns.Package.Name, vulns.Package.Ecosystem)
+			if err != nil {
+				return fmt.Errorf("failed to insert advisory package %s: %w", vulns.Package.Name, err)
+			}
+		}
+
 		_, err := db.conn.Exec(
 			`INSERT OR REPLACE INTO GithubAdvisories 
 			(ghsa_id, cve_id, identifier, published, summary, description, severity, type) 
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			v.GhsaID, v.CveID, identifier, v.PublishedAt,
+			v.GhsaID, v.CveID, identifier, v.PublishedAt.Format("2006-01-02T15:04:05"),
 			v.Summary, v.Description, v.Severity, v.Type,
 		)
 		if err != nil {
@@ -164,6 +175,47 @@ func (db *DB) ReadGithub() ([]DBVulnerabilityGithub, error) {
 	return results, rows.Err()
 }
 
+func (db *DB) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
+	rows, err := db.conn.Query("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories LIMIT 30")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	var results []DBVulnerabilityGithub
+
+	for rows.Next() {
+		var v DBVulnerabilityGithub
+		err := rows.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
+		if err != nil {
+			log.Fatal(err)
+		}
+		results = append(results, v)
+	}
+	return results, rows.Err()
+
+}
+
+func (db *DB) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
+	rows, err := db.conn.Query("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities LIMIT 30")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	var results []DBVulnerabilityNVD
+
+	for rows.Next() {
+		var v DBVulnerabilityNVD
+		err := rows.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		if err != nil {
+			log.Fatal(err)
+		}
+		results = append(results, v)
+	}
+	return results, rows.Err()
+}
+
 func (db *DB) FilterRequestNVD(filter string) ([]DBVulnerabilityNVD, error) {
 	var result []DBVulnerabilityNVD
 	rows, err := db.conn.Query(`SELECT v.cve_id, v.source_identifier, v.published, v.last_modified, v.description, v.base_score 
@@ -185,4 +237,25 @@ func (db *DB) FilterRequestNVD(filter string) ([]DBVulnerabilityNVD, error) {
 	}
 	return result, rows.Err()
 
+}
+
+func (db *DB) FilterRequestGithub(filter string) ([]DBVulnerabilityGithub, error) {
+	var result []DBVulnerabilityGithub
+	rows, err := db.conn.Query(`SELECT g.ghsa_id, COALESCE(g.cve_id, ''), COALESCE(g.identifier, ''), g.published, g.summary, g.description, g.severity, g.type
+         FROM GithubAdvisories g
+         JOIN AffectedAdvisories gh ON g.ghsa_id = gh.ghsa_id
+         WHERE gh.packageName LIKE ?`, "%"+filter+"%")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v DBVulnerabilityGithub
+		err := rows.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
+		if err != nil {
+			log.Fatal(err)
+		}
+		result = append(result, v)
+	}
+	return result, rows.Err()
 }

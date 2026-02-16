@@ -2,17 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"cvedashboard2.0/middleware"
 	"cvedashboard2.0/parser"
 	"cvedashboard2.0/storage"
 	"cvedashboard2.0/structs"
-
-	"github.com/gin-gonic/gin"
 )
 
 type Client struct {
@@ -24,7 +26,7 @@ type Client struct {
 func NewClient() *Client {
 	return &Client{
 		Clients: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 60 * time.Second,
 		},
 		baseUrl:     "https://services.nvd.nist.gov/rest/json/cves/2.0/",
 		rateLimiter: time.NewTicker(1 * time.Second),
@@ -34,7 +36,7 @@ func NewClient() *Client {
 func NewClientGithub() *Client {
 	return &Client{
 		Clients: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 60 * time.Second,
 		},
 		baseUrl:     "https://api.github.com/advisories",
 		rateLimiter: time.NewTicker(1 * time.Second),
@@ -77,45 +79,71 @@ func (c *Client) FetchCVEs(ctx context.Context, startIndex, resultsPerPage int) 
 	return body, nil
 }
 
-func (c *Client) FetchGithubAdvisories(ctx context.Context) ([]byte, error) {
+func (c *Client) FetchGithubAdvisories(ctx context.Context, url string) ([]byte, string, error) {
 
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseUrl, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	if url == "" {
+		url = fmt.Sprintf("%s?per_page=100", c.baseUrl)
 	}
 
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	req.Header.Set("Authorization", "Bearer "+githubToken)
 	resp, err := c.Clients.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch CVEs: %w", err)
+		return nil, "", fmt.Errorf("failed to fetch CVEs: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check status code
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll((resp.Body))
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(resp.Body)
+		return nil, "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, "", fmt.Errorf("failed to read response body: %w", err)
 	}
-	return body, nil
+
+	nextURL := parseNextLink(resp.Header.Get("Link"))
+	return body, nextURL, nil
+}
+
+func parseNextLink(linkHeader string) string {
+	for _, part := range strings.Split(linkHeader, ",") {
+		if strings.Contains(part, `rel="next"`) {
+			start := strings.Index(part, "<")
+			end := strings.Index(part, ">")
+			if start != -1 && end != -1 {
+				return part[start+1 : end]
+			}
+		}
+	}
+	return ""
 }
 
 func main() {
-	api := gin.Default()
 
+	port := ":8081"
 	// Setup the routes
 
-	api.GET("/nvd", getVulns)
-	api.GET("/github", getVulnsGithub)
-	api.GET("/nvd/search", SearchNVD)
-	// !FIXME
+	http.HandleFunc("GET /github", getVulnsGithub)
+	http.HandleFunc("GET /github/search", SearchGithub)
+	http.HandleFunc("GET /nvd", getVulns)
+	http.HandleFunc("GET /nvd/search", SearchNVD)
+	http.HandleFunc("GET /", homePage)
+	log.Println("Listening and serving HTTP on", port)
+
+	pathLogging := middleware.PathLogging(http.DefaultServeMux)
 
 	go syncNVDData()
+	go syncGithubData()
 
-	api.Run(":8080")
+	// everything must be before this line or it will not run
+	log.Fatal(http.ListenAndServe(port, pathLogging))
 
 }
 
@@ -142,7 +170,7 @@ func syncNVDData() {
 			fmt.Printf("insert error: %v\n", err)
 		}
 		db.Close()
-		fmt.Printf("synced %d/%d\n", startIndex+len(data.Vulnerabilities), data.TotalResults)
+		fmt.Printf("nvd data synced %d/%d\n", startIndex+len(data.Vulnerabilities), data.TotalResults)
 		startIndex += 2000
 		if startIndex >= data.TotalResults {
 			break
@@ -151,114 +179,158 @@ func syncNVDData() {
 	fmt.Println("NVD sync complete")
 }
 
-// Handlers
-// TODO This is a proof of concept below:
-// func getVulns(c *gin.Context) {
-// 	a, err := NewClient().FetchCVEs(c.Request.Context(), 1, 100)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-// 		return
-// 	}
-// 	b, err := parser.Unmarshal(a)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-// 		return
-// 	}
-// 	c.JSON(http.StatusOK, b)
-// }
+func syncGithubData() {
+	client := NewClientGithub()
+	nextURL := ""
+	page := 1
+	for {
+		body, next, err := client.FetchGithubAdvisories(context.Background(), nextURL)
+		if err != nil {
+			fmt.Printf("fetch error: %s", err)
+			break
+		}
+		data, err := parser.Unmarshal[[]structs.GithubJson](body)
+		if err != nil {
+			fmt.Printf("marshaler error: %s", err)
+			break
+		}
+		if len(data) == 0 {
+			break
+		}
+		db, err := storage.Connect()
+		if err != nil {
+			fmt.Printf("db connect error: %s", err)
+			break
+		}
+		err1 := db.InsertVulnDataGithub(data)
+		if err1 != nil {
+			fmt.Printf("insert error: %s", err1)
+			break
+		}
+		db.Close()
+		fmt.Printf("github advisories synced page %d: %d advisories\n", page, len(data))
+		page++
+		nextURL = next
+		if nextURL == "" {
+			break
+		}
+	}
+	fmt.Println("GitHub sync complete")
+}
 
-func getVulns(c *gin.Context) {
-	a, err := NewClient().FetchCVEs(c.Request.Context(), 1, 100)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	b, err := parser.Unmarshal[structs.NvdJson](a)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	j, err := storage.Connect()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	l := j.InsertVulnDataNVD(&b)
-	if l != nil {
-		fmt.Print(l.Error())
-	}
-	err1 := j.Close()
-	if err1 != nil {
-		fmt.Print(err1.Error())
-	}
+func getVulns(w http.ResponseWriter, r *http.Request) {
+
 	d, err := storage.Connect()
+	log.Println("Connecting to DB......")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	i, err := d.Read()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	k := d.Close()
-	if k != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	defer d.Close()
+	if err != nil {
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, i)
+	WriteJSON(w, http.StatusOK, i)
 }
 
-func getVulnsGithub(c *gin.Context) {
-	a, err := NewClientGithub().FetchGithubAdvisories(context.Background())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	b, err := parser.Unmarshal[[]structs.GithubJson](a)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	j, err := storage.Connect()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	l := j.InsertVulnDataGithub(b)
-	if l != nil {
-		fmt.Print(l.Error())
-	}
-	err1 := j.Close()
-	if err1 != nil {
-		fmt.Print(err1.Error())
-	}
+func getVulnsGithub(w http.ResponseWriter, r *http.Request) {
+
 	d, err := storage.Connect()
+	log.Println("Connecting to DB......")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	i, err := d.ReadGithub()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	k := d.Close()
-	if k != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, i)
+	defer d.Close()
+
+	WriteJSON(w, http.StatusOK, i)
+
 }
 
-func SearchNVD(c *gin.Context) {
-	service := c.Query("service")
+func WriteJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+
+	w.WriteHeader(status)
+
+	err := json.NewEncoder(w).Encode(data)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+func ErrorHandler(w http.ResponseWriter, status int, msg string) {
+	WriteJSON(w, status, map[string]any{"[ERROR]": msg})
+}
+
+func SearchNVD(w http.ResponseWriter, r *http.Request) {
+	service := r.URL.Query().Get("service")
+	log.Println("Connecting to DB......")
 	d, err := storage.Connect()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	defer d.Close()
 	results, err := d.FilterRequestNVD(service)
-	c.JSON(http.StatusOK, results)
+	WriteJSON(w, http.StatusOK, results)
+
+}
+
+func SearchGithub(w http.ResponseWriter, r *http.Request) {
+	advisory := r.URL.Query().Get("advisory")
+	log.Println("Connecting to DB......")
+	d, err := storage.Connect()
+	if err != nil {
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer d.Close()
+	results, err := d.FilterRequestGithub(advisory)
+
+	WriteJSON(w, http.StatusOK, results)
+
+}
+
+func homePage(w http.ResponseWriter, r *http.Request) {
+	d, err := storage.Connect()
+	if err != nil {
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer d.Close()
+	githubResult, err := d.ReadHomepageGithub()
+	if err != nil {
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	nvdResult, err := d.ReadHomepageNVd()
+	if err != nil {
+		log.Printf("DB Error: %s", err)
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, githubResult)
+	WriteJSON(w, http.StatusOK, nvdResult)
 
 }
