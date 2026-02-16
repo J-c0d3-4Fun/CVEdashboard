@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"cvedashboard2.0/parser"
@@ -24,7 +25,7 @@ type Client struct {
 func NewClient() *Client {
 	return &Client{
 		Clients: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 60 * time.Second,
 		},
 		baseUrl:     "https://services.nvd.nist.gov/rest/json/cves/2.0/",
 		rateLimiter: time.NewTicker(1 * time.Second),
@@ -34,7 +35,7 @@ func NewClient() *Client {
 func NewClientGithub() *Client {
 	return &Client{
 		Clients: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 60 * time.Second,
 		},
 		baseUrl:     "https://api.github.com/advisories",
 		rateLimiter: time.NewTicker(1 * time.Second),
@@ -77,30 +78,50 @@ func (c *Client) FetchCVEs(ctx context.Context, startIndex, resultsPerPage int) 
 	return body, nil
 }
 
-func (c *Client) FetchGithubAdvisories(ctx context.Context) ([]byte, error) {
+func (c *Client) FetchGithubAdvisories(ctx context.Context, url string) ([]byte, string, error) {
 
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseUrl, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	if url == "" {
+		url = fmt.Sprintf("%s?per_page=100", c.baseUrl)
 	}
 
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	req.Header.Set("Authorization", "Bearer "+githubToken)
 	resp, err := c.Clients.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch CVEs: %w", err)
+		return nil, "", fmt.Errorf("failed to fetch CVEs: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check status code
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll((resp.Body))
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(resp.Body)
+		return nil, "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, "", fmt.Errorf("failed to read response body: %w", err)
 	}
-	return body, nil
+
+	nextURL := parseNextLink(resp.Header.Get("Link"))
+	return body, nextURL, nil
+}
+
+func parseNextLink(linkHeader string) string {
+	for _, part := range strings.Split(linkHeader, ",") {
+		if strings.Contains(part, `rel="next"`) {
+			start := strings.Index(part, "<")
+			end := strings.Index(part, ">")
+			if start != -1 && end != -1 {
+				return part[start+1 : end]
+			}
+		}
+	}
+	return ""
 }
 
 func main() {
@@ -108,13 +129,14 @@ func main() {
 
 	// Setup the routes
 
+	api.GET("/", homePage)
 	api.GET("/nvd", getVulns)
 	api.GET("/github", getVulnsGithub)
 	api.GET("/nvd/search", SearchNVD)
-	// !FIXME
+	api.GET("/github/search", SearchGithub)
 
 	go syncNVDData()
-
+	go syncGithubData()
 	api.Run(":8080")
 
 }
@@ -142,13 +164,52 @@ func syncNVDData() {
 			fmt.Printf("insert error: %v\n", err)
 		}
 		db.Close()
-		fmt.Printf("synced %d/%d\n", startIndex+len(data.Vulnerabilities), data.TotalResults)
+		fmt.Printf("nvd data synced %d/%d\n", startIndex+len(data.Vulnerabilities), data.TotalResults)
 		startIndex += 2000
 		if startIndex >= data.TotalResults {
 			break
 		}
 	}
 	fmt.Println("NVD sync complete")
+}
+
+func syncGithubData() {
+	client := NewClientGithub()
+	nextURL := ""
+	page := 1
+	for {
+		body, next, err := client.FetchGithubAdvisories(context.Background(), nextURL)
+		if err != nil {
+			fmt.Printf("fetch error: %s", err)
+			break
+		}
+		data, err := parser.Unmarshal[[]structs.GithubJson](body)
+		if err != nil {
+			fmt.Printf("marshaler error: %s", err)
+			break
+		}
+		if len(data) == 0 {
+			break
+		}
+		db, err := storage.Connect()
+		if err != nil {
+			fmt.Printf("db connect error: %s", err)
+			break
+		}
+		err1 := db.InsertVulnDataGithub(data)
+		if err1 != nil {
+			fmt.Printf("insert error: %s", err1)
+			break
+		}
+		db.Close()
+		fmt.Printf("github advisories synced page %d: %d advisories\n", page, len(data))
+		page++
+		nextURL = next
+		if nextURL == "" {
+			break
+		}
+	}
+	fmt.Println("GitHub sync complete")
 }
 
 // Handlers
@@ -210,7 +271,7 @@ func getVulns(c *gin.Context) {
 }
 
 func getVulnsGithub(c *gin.Context) {
-	a, err := NewClientGithub().FetchGithubAdvisories(context.Background())
+	a, _, err := NewClientGithub().FetchGithubAdvisories(context.Background(), "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -258,7 +319,42 @@ func SearchNVD(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	defer d.Close()
 	results, err := d.FilterRequestNVD(service)
 	c.JSON(http.StatusOK, results)
 
+}
+
+func SearchGithub(c *gin.Context) {
+	advisory := c.Query("advisory")
+	d, err := storage.Connect()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer d.Close()
+	results, err := d.FilterRequestGithub(advisory)
+	c.JSON(http.StatusOK, results)
+}
+
+func homePage(c *gin.Context) {
+	d, err := storage.Connect()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer d.Close()
+	githubResult, err := d.ReadGithub()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	}
+	nvdResult, err := d.Read()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"nvd":    nvdResult,
+		"github": githubResult,
+	})
 }
