@@ -126,16 +126,10 @@ func parseNextLink(linkHeader string) string {
 }
 
 func main() {
-	// api := gin.Default()
-	port := ":8081"
-	// // Setup the routes
-	// api.GET("/", homePage)
-	// api.GET("/nvd", getVulns)
-	// api.GET("/github", getVulnsGithub)
-	// api.GET("/nvd/search", SearchNVD)
-	// api.GET("/github/search", SearchGithub)
 
-	// Testing out manually writing the function
+	port := ":8081"
+	// Setup the routes
+
 	http.HandleFunc("GET /github", getVulnsGithub)
 	http.HandleFunc("GET /github/search", SearchGithub)
 	http.HandleFunc("GET /nvd", getVulns)
@@ -151,11 +145,7 @@ func main() {
 	// everything must be before this line or it will not run
 	log.Fatal(http.ListenAndServe(port, pathLogging))
 
-	// api.Run(":8080")
-
 }
-
-// Testing new handlers:
 
 func syncNVDData() {
 	client := NewClient()
@@ -227,22 +217,6 @@ func syncGithubData() {
 	}
 	fmt.Println("GitHub sync complete")
 }
-
-// Handlers
-// TODO This is a proof of concept below:
-// func getVulns(c *gin.Context) {
-// 	a, err := NewClient().FetchCVEs(c.Request.Context(), 1, 100)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-// 		return
-// 	}
-// 	b, err := parser.Unmarshal(a)
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-// 		return
-// 	}
-// 	c.JSON(http.StatusOK, b)
-// }
 
 func getVulns(w http.ResponseWriter, r *http.Request) {
 
