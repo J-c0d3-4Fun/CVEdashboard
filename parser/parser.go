@@ -3,8 +3,6 @@ package parser
 import (
 	"encoding/json"
 	"fmt"
-
-	"cvedashboard2.0/structs"
 )
 
 type ParseData struct {
@@ -21,18 +19,4 @@ func Unmarshal[T any](data []byte) (T, error) {
 		return report, fmt.Errorf("error unmarshaling: %w", err)
 	}
 	return report, nil
-}
-
-func GetVulnID(vuln []*structs.NvdJson) []string {
-
-	var ids []string
-	for _, nvd := range vuln {
-		for _, v := range nvd.Vulnerabilities {
-			ids = append(ids, v.Cve.ID)
-		}
-
-	}
-
-	return ids
-
 }
