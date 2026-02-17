@@ -25,6 +25,6 @@ func PathLogging(handler http.Handler) http.Handler {
 
 		handler.ServeHTTP(writer, r)
 
-		log.Printf("%s %s %d %v", r.Method, r.URL.Path, writer.statusCode, start)
+		log.Printf("%s %s %d %v", r.Method, r.URL.Path, writer.statusCode, time.Since(start))
 	})
 }

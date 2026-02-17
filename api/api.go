@@ -236,11 +236,7 @@ func getVulns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer d.Close()
-	if err != nil {
-		log.Printf("DB Error: %s", err)
-		ErrorHandler(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+
 	WriteJSON(w, http.StatusOK, i)
 }
 
@@ -332,6 +328,7 @@ func homePage(w http.ResponseWriter, r *http.Request) {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	WriteJSON(w, http.StatusOK, githubResult)
 	nvdResult, err := d.ReadHomepageNVd()
 	if err != nil {
 		log.Printf("DB Error: %s", err)
@@ -339,7 +336,6 @@ func homePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, githubResult)
 	WriteJSON(w, http.StatusOK, nvdResult)
 
 }

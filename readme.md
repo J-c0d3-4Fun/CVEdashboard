@@ -56,16 +56,32 @@ The server starts on `http://localhost:8080`.
 
 | Method | Endpoint            | Description                                          |
 |--------|---------------------|------------------------------------------------------|
-| GET    | `/vulnerabilities`  | Fetches CVEs from NVD, stores them, and returns all stored vulnerabilities |
+| GET    | `/nvd`              | Returns all NVD vulnerabilities from database        |
+| GET    | `/nvd/search`       | Search NVD vulnerabilities by product/criteria (query param: `service=xxx`) |
+| GET    | `/github`           | Returns all GitHub Security Advisories from database |
+| GET    | `/github/search`    | Search GitHub advisories by package name (query param: `advisory=xxx`) |
+| GET    | `/`                 | Homepage—returns latest 30 vulnerabilities from each source |
+| GET    | `/sync/nvd`         | Manually trigger NVD data sync (background process) |
+| GET    | `/sync/github`      | Manually trigger GitHub data sync (background process) |
 
-### Example
+### Examples
 
+**Fetch all NVD vulnerabilities:**
 ```bash
-curl http://localhost:8080/vulnerabilities
+curl http://localhost:8081/nvd
 ```
 
-Response returns an array of vulnerability objects:
+**Search vulnerabilities by product:**
+```bash
+curl http://localhost:8081/nvd/search?service=apache
+```
 
+**Search GitHub advisories:**
+```bash
+curl http://localhost:8081/github/search?advisory=express
+```
+
+**Response Format (NVD):**
 ```json
 [
   {
@@ -77,6 +93,41 @@ Response returns an array of vulnerability objects:
     "BaseScore": 7.5
   }
 ]
+```
+
+**Response Format (GitHub):**
+```json
+[
+  {
+    "GHSAID": "GHSA-xxxx-xxxx-xxxx",
+    "CVEID": "CVE-2024-XXXXX",
+    "Identifier": "GHSA-xxx-xxx-xxx",
+    "Published": "2024-01-15T00:00:00.000",
+    "Summary": "Vulnerability in package X",
+    "Description": "Detailed description...",
+    "Severity": "high",
+    "Type": "unreviewed"
+  }
+]
+```
+
+### Environment Variables
+
+| Variable                   | Description                                          |
+|---------------------------|------------------------------------------------------|
+| `API_KEY`                  | NVD API key (get from https://nvd.nist.gov/account/login) |
+| `GITHUB_TOKEN`             | GitHub personal access token (requires `security_events:read` scope) |
+| `DATABASE_CONNECTION_STRING` | SQLite database path (default: `./cve_dashboard.db`) |
+
+### Testing
+
+```bash
+# Run all tests
+go test ./...
+
+# Run specific package tests
+go test ./parser -v
+go test ./storage -v
 ```
 
 ## Roadmap

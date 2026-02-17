@@ -34,7 +34,7 @@ func TestDataReadNVD(t *testing.T) {
 			t.Errorf("Unable to connect to Database")
 		}
 
-		_, err1 := database.ReadGithub()
+		_, err1 := database.Read()
 		if err1 != nil {
 			DbError(t, "Unable to read any %s data from the Database", "NVD", err)
 		}
@@ -107,26 +107,22 @@ func TestStoringToDBGithub(t *testing.T) {
 	t.Log("Able to successfully insert data into Github Database")
 }
 
-// TODO Fix Me!
-// func TestStoringToDBNVD(t *testing.T) {
+func TestStoringToDBNVD(t *testing.T) {
 
-// 	database := connectToDB(t)
-// 	defer database.Close()
+	database := connectToDB(t)
+	defer database.Close()
 
-// 	testStruct := structs.NvdJson{
-// 		Vulnerabilities: []struct{
-// 			Cve struct {
+	testStruct := structs.NvdJson{
+		TotalResults: 100,
+	}
 
-// 			}
+	err := database.InsertVulnDataNVD(&testStruct)
+	if err != nil {
+		DbError(t, "Unable to insert Data into %s Database", "NVD", err)
+	}
 
-// 	}
-// 	err := database.InsertVulnDataGithub([]structs.GithubJson{testStruct})
-// 	if err != nil {
-// 		DbError(t, "Unable to insert Data into %s Database", "NVD", err)
-// 	}
-
-// 	t.Log("Able to successfully insert data into NVD Database")
-// }
+	t.Log("Able to successfully insert data into NVD Database")
+}
 
 func connectToDB(t *testing.T) *storage.DB {
 	t.Helper()
