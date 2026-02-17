@@ -135,19 +135,21 @@ func main() {
 	http.HandleFunc("GET /nvd", getVulns)
 	http.HandleFunc("GET /nvd/search", SearchNVD)
 	http.HandleFunc("GET /", homePage)
+	http.HandleFunc("GET /sync/github", SyncButtonGithub)
+	http.HandleFunc("GET /sync/nvd", SyncButtonNVD)
 	log.Println("Listening and serving HTTP on", port)
 
 	pathLogging := middleware.PathLogging(http.DefaultServeMux)
 
-	go syncNVDData()
-	go syncGithubData()
+	go AutoSyncNVDData()
+	go AutoSyncGithubData()
 
 	// everything must be before this line or it will not run
 	log.Fatal(http.ListenAndServe(port, pathLogging))
 
 }
 
-func syncNVDData() {
+func AutoSyncNVDData() {
 	client := NewClient()
 	startIndex := 0
 	for {
@@ -179,7 +181,7 @@ func syncNVDData() {
 	fmt.Println("NVD sync complete")
 }
 
-func syncGithubData() {
+func AutoSyncGithubData() {
 	client := NewClientGithub()
 	nextURL := ""
 	page := 1
@@ -264,7 +266,8 @@ func getVulnsGithub(w http.ResponseWriter, r *http.Request) {
 }
 
 func WriteJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
+	const jsonContentType = "application/json"
+	w.Header().Set("Content-Type", jsonContentType)
 
 	w.WriteHeader(status)
 
@@ -309,6 +312,12 @@ func SearchGithub(w http.ResponseWriter, r *http.Request) {
 
 }
 
+// Filters for homepage
+// Highest Severity Vuln
+// Most Recent Vuln for github
+// Most Recent Vuln for NVD
+// heat map
+
 func homePage(w http.ResponseWriter, r *http.Request) {
 	d, err := storage.Connect()
 	if err != nil {
@@ -333,4 +342,16 @@ func homePage(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, githubResult)
 	WriteJSON(w, http.StatusOK, nvdResult)
 
+}
+
+func SyncButtonGithub(w http.ResponseWriter, r *http.Request) {
+	go AutoSyncGithubData()
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Printf("Sync started in background")
+}
+
+func SyncButtonNVD(w http.ResponseWriter, r *http.Request) {
+	go AutoSyncNVDData()
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Printf("Sync started in background")
 }

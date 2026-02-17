@@ -81,13 +81,14 @@ Response returns an array of vulnerability objects:
 
 ## Roadmap
 
-- [ ] **GitHub Security Advisories** — Integrate the [GitHub Advisory Database API](https://docs.github.com/en/rest/security-advisories) as a second data source
-- [ ] Pagination support for large CVE result sets
-- [ ] Filtering and search by CVE ID, severity, date range
+- [X] **GitHub Security Advisories** — Integrate the [GitHub Advisory Database API](https://docs.github.com/en/rest/security-advisories) as a second data source
+- [X] Pagination support for large CVE result sets
+- [ ] Filtering and search by CVE ID, severity, date range <- can currently search based on name
 - [ ] CVSS v3.1 metric support
-- [ ] Scheduled background sync (replace on-demand fetch)
+- [X] Scheduled background sync (replace on-demand fetch)
 - [ ] Frontend dashboard UI
-
+- [ ] Add Mux handler for a router
+- [ ] Add Slack Integration 
 ## License
 
 This project is open source and available under the [MIT License](LICENSE).
