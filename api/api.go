@@ -68,7 +68,7 @@ func (c *Client) FetchCVEs(ctx context.Context, startIndex, resultsPerPage int) 
 
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll((resp.Body))
+		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -188,12 +188,12 @@ func AutoSyncGithubData() {
 	for {
 		body, next, err := client.FetchGithubAdvisories(context.Background(), nextURL)
 		if err != nil {
-			fmt.Printf("fetch error: %s", err)
+			fmt.Printf("fetch error: %v", err)
 			break
 		}
 		data, err := parser.Unmarshal[[]structs.GithubJson](body)
 		if err != nil {
-			fmt.Printf("marshaler error: %s", err)
+			fmt.Printf("marshaler error: %v", err)
 			break
 		}
 		if len(data) == 0 {
@@ -201,12 +201,12 @@ func AutoSyncGithubData() {
 		}
 		db, err := storage.Connect()
 		if err != nil {
-			fmt.Printf("db connect error: %s", err)
+			fmt.Printf("db connect error: %v", err)
 			break
 		}
 		err1 := db.InsertVulnDataGithub(data)
 		if err1 != nil {
-			fmt.Printf("insert error: %s", err1)
+			fmt.Printf("insert error: %v", err1)
 			break
 		}
 		db.Close()
@@ -278,7 +278,7 @@ func ErrorHandler(w http.ResponseWriter, status int, msg string) {
 }
 
 func SearchNVD(w http.ResponseWriter, r *http.Request) {
-	service := r.URL.Query().Get("service")
+	service := queryValidation(w, r, "service")
 	log.Println("Connecting to DB......")
 	d, err := storage.Connect()
 	if err != nil {
@@ -288,14 +288,21 @@ func SearchNVD(w http.ResponseWriter, r *http.Request) {
 	}
 	defer d.Close()
 	results, err := d.FilterRequestNVD(service)
+	if err != nil {
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	WriteJSON(w, http.StatusOK, results)
 
 }
 
 func SearchGithub(w http.ResponseWriter, r *http.Request) {
-	advisory := r.URL.Query().Get("advisory")
+	advisory := queryValidation(w, r, "advisory")
+
 	log.Println("Connecting to DB......")
 	d, err := storage.Connect()
+
 	if err != nil {
 		log.Printf("DB Error: %s", err)
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
@@ -303,6 +310,10 @@ func SearchGithub(w http.ResponseWriter, r *http.Request) {
 	}
 	defer d.Close()
 	results, err := d.FilterRequestGithub(advisory)
+	if err != nil {
+		ErrorHandler(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	WriteJSON(w, http.StatusOK, results)
 
@@ -328,7 +339,7 @@ func homePage(w http.ResponseWriter, r *http.Request) {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	WriteJSON(w, http.StatusOK, githubResult)
+
 	nvdResult, err := d.ReadHomepageNVd()
 	if err != nil {
 		log.Printf("DB Error: %s", err)
@@ -336,7 +347,10 @@ func homePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, nvdResult)
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"github": githubResult,
+		"nvd":    nvdResult,
+	})
 
 }
 
@@ -350,4 +364,19 @@ func SyncButtonNVD(w http.ResponseWriter, r *http.Request) {
 	go AutoSyncNVDData()
 	w.WriteHeader(http.StatusAccepted)
 	fmt.Printf("Sync started in background")
+}
+
+func queryValidation(w http.ResponseWriter, r *http.Request, param string) string {
+	query := r.URL.Query()
+	if !query.Has(param) {
+		WriteJSON(w, http.StatusBadRequest, "Missing advisory parameter!")
+		return ""
+	}
+	queryParam := query.Get(param)
+
+	if queryParam == " " {
+		WriteJSON(w, http.StatusBadRequest, "advisory cannot be empty!")
+		return ""
+	}
+	return queryParam
 }

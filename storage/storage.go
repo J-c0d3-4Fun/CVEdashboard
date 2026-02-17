@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"time"
 
 	"cvedashboard2.0/structs"
 	_ "github.com/mattn/go-sqlite3"
@@ -58,14 +59,19 @@ type DB struct {
 
 func Connect() (*DB, error) {
 	dbEnv := os.Getenv("DATABASE_CONNECTION_STRING")
-	conn, err := sql.Open("sqlite3", dbEnv)
+	DBinit, err := sql.Open("sqlite3", dbEnv)
 	if err != nil {
 		return nil, err
 	}
 	// WAL mode lets readers and writers operate concurrently on SQLite
 	// was having issues witht eh goroutines trying to write to Db at the same time
-	conn.Exec("PRAGMA journal_mode=WAL")
-	return &DB{conn: conn}, nil
+	DBinit.Exec("PRAGMA journal_mode=WAL")
+
+	DBinit.SetMaxOpenConns(25)
+	DBinit.SetMaxIdleConns(25)
+	DBinit.SetConnMaxLifetime(5 * time.Minute)
+
+	return &DB{conn: DBinit}, nil
 }
 
 func (db *DB) Close() error {
@@ -151,7 +157,7 @@ func (db *DB) Read() ([]DBVulnerabilityNVD, error) {
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityNVD, error) {
 		var v DBVulnerabilityNVD
-		err := rows.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		err := r.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
 		return v, err
 	})
 
@@ -167,14 +173,14 @@ func (db *DB) ReadGithub() ([]DBVulnerabilityGithub, error) {
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityGithub, error) {
 		var v DBVulnerabilityGithub
-		err := rows.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
+		err := r.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
 		return v, err
 	})
 
 }
 
 func (db *DB) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
-	rows, err := db.conn.Query("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories LIMIT 30")
+	rows, err := db.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories LIMIT 30")
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +188,7 @@ func (db *DB) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityGithub, error) {
 		var v DBVulnerabilityGithub
-		err := rows.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
+		err := r.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
 		return v, err
 	})
 
@@ -197,7 +203,7 @@ func (db *DB) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityNVD, error) {
 		var v DBVulnerabilityNVD
-		err := rows.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		err := r.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
 		return v, err
 	})
 
@@ -216,7 +222,7 @@ func (db *DB) FilterRequestNVD(filter string) ([]DBVulnerabilityNVD, error) {
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityNVD, error) {
 		var v DBVulnerabilityNVD
-		err := rows.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		err := r.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
 		return v, err
 	})
 
@@ -235,7 +241,7 @@ func (db *DB) FilterRequestGithub(filter string) ([]DBVulnerabilityGithub, error
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityGithub, error) {
 
 		var v DBVulnerabilityGithub
-		err := rows.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
+		err := r.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
 		return v, err
 	})
 

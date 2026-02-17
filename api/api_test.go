@@ -97,7 +97,7 @@ func TestGithubContentType(t *testing.T) {
 
 func TestNVDContentType(t *testing.T) {
 	t.Run("Confirming we Receive JSON as the Content Type from NVD", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, "/github", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/nvd", nil)
 		resp := httptest.NewRecorder()
 
 		getVulns(resp, req)
@@ -107,5 +107,19 @@ func TestNVDContentType(t *testing.T) {
 			t.Errorf("response did not have content-type of %s, got %v", want, resp.Result().Header)
 		}
 		t.Logf("Successfully recieve JSON response from NVD")
+	})
+}
+
+func TestHompage(t *testing.T) {
+	t.Run("Testing homepage returns data from struct", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, "/", nil)
+		resp := httptest.NewRecorder()
+
+		homePage(resp, req)
+		if resp.Body == nil {
+			t.Errorf("no data in the response body of the Homepage!")
+		}
+		t.Logf("Successfully received data for the Homepage")
+
 	})
 }
