@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,21 +128,34 @@ func parseNextLink(linkHeader string) string {
 
 func main() {
 
+	db, err := storage.Connect()
+	if err != nil {
+		log.Fatal(err)
+	}
+	db.CreateVulnerabilitiesTable()
+	db.CreateAffectedAdvisories()
+	db.CreateGithubAdvisoriesTable()
+	db.CreateAffectedProductsTable()
+	db.CreateAffectedAdvisories()
+	db.Close()
+
 	port := ":8081"
 	// Setup the routes
 
-	http.HandleFunc("GET /github", getVulnsGithub)
-	http.HandleFunc("GET /github/search", SearchGithub)
-	http.HandleFunc("GET /nvd", getVulns)
-	http.HandleFunc("GET /nvd/search", SearchNVD)
-	http.HandleFunc("GET /", homePage)
-	http.HandleFunc("GET /sync/github", SyncButtonGithub)
-	http.HandleFunc("GET /sync/nvd", SyncButtonNVD)
+	http.HandleFunc("GET /api/github", getVulnsGithub)
+	http.HandleFunc("GET /api/github/search", SearchGithub)
+	http.HandleFunc("GET /api/nvd", getVulns)
+	http.HandleFunc("GET /api/nvd/search", SearchNVD)
+	http.HandleFunc("GET /api/home", homePage)
+	http.HandleFunc("GET /api/sync/github", SyncButtonGithub)
+	http.HandleFunc("GET /api/sync/nvd", SyncButtonNVD)
 	log.Println("Listening and serving HTTP on", port)
+	http.Handle("/", http.FileServer(http.Dir("./static")))
 
 	pathLogging := middleware.PathLogging(http.DefaultServeMux)
 
 	go AutoSyncNVDData()
+
 	go AutoSyncGithubData()
 
 	// everything must be before this line or it will not run
@@ -221,6 +235,9 @@ func AutoSyncGithubData() {
 }
 
 func getVulns(w http.ResponseWriter, r *http.Request) {
+	page := pageParam(r, "page", 1)
+	limit := pageParam(r, "limit", 50)
+	offset := (page - 1) * limit
 
 	d, err := storage.Connect()
 	log.Println("Connecting to DB......")
@@ -229,7 +246,7 @@ func getVulns(w http.ResponseWriter, r *http.Request) {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	i, err := d.Read()
+	i, err := d.Read(offset, limit)
 	if err != nil {
 		log.Printf("DB Error: %s", err)
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
@@ -241,6 +258,9 @@ func getVulns(w http.ResponseWriter, r *http.Request) {
 }
 
 func getVulnsGithub(w http.ResponseWriter, r *http.Request) {
+	page := pageParam(r, "page", 1)
+	limit := pageParam(r, "limit", 50)
+	offset := (page - 1) * limit
 
 	d, err := storage.Connect()
 	log.Println("Connecting to DB......")
@@ -249,7 +269,7 @@ func getVulnsGithub(w http.ResponseWriter, r *http.Request) {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	i, err := d.ReadGithub()
+	i, err := d.ReadGithub(offset, limit)
 	if err != nil {
 		log.Printf("DB Error: %s", err)
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
@@ -379,4 +399,17 @@ func queryValidation(w http.ResponseWriter, r *http.Request, param string) strin
 		return ""
 	}
 	return queryParam
+}
+
+func pageParam(r *http.Request, name string, defaultVal int) int {
+	val := r.URL.Query().Get(name)
+	if val == "" {
+		return defaultVal
+	}
+	intVal, err := strconv.Atoi(val)
+	if err == nil {
+		return intVal
+	}
+	return defaultVal
+
 }
