@@ -10,13 +10,15 @@ import (
 // Test Storing to the DB
 
 func TestDataReadGithub(t *testing.T) {
+	limit := 20
+	offset := 1 * limit
 	t.Run("Testing DB read action", func(t *testing.T) {
 		database, err := storage.Connect()
 		if err != nil {
 			t.Errorf("Unable to connect to Database")
 		}
 
-		_, err1 := database.ReadGithub()
+		_, err1 := database.ReadGithub(offset, limit)
 		if err1 != nil {
 			t.Errorf("Unable to read any Github data from the Database")
 		}
@@ -28,13 +30,15 @@ func TestDataReadGithub(t *testing.T) {
 }
 
 func TestDataReadNVD(t *testing.T) {
+	limit := 20
+	offset := 1 * limit
 	t.Run("Testing DB read action", func(t *testing.T) {
 		database, err := storage.Connect()
 		if err != nil {
 			t.Errorf("Unable to connect to Database")
 		}
 
-		_, err1 := database.Read()
+		_, err1 := database.Read(offset, limit)
 		if err1 != nil {
 			DbError(t, "Unable to read any %s data from the Database", "NVD", err)
 		}
@@ -46,11 +50,13 @@ func TestDataReadNVD(t *testing.T) {
 }
 
 func TestCheckNumberOfRowsGithub(t *testing.T) {
+	limit := 20
+	offset := 1 * limit
 	database, err := storage.Connect()
 	if err != nil {
 		t.Errorf("Unable to connect to Database")
 	}
-	rows, err := database.ReadGithub()
+	rows, err := database.ReadGithub(offset, 20)
 	if err != nil {
 		DbError(t, "Unable to read any %s data from the Database", "Github", err)
 	}
@@ -63,11 +69,13 @@ func TestCheckNumberOfRowsGithub(t *testing.T) {
 }
 
 func TestCheckNumberOfRowsNVD(t *testing.T) {
+	limit := 20
+	offset := 1 * limit
 	database, err := storage.Connect()
 	if err != nil {
 		t.Errorf("Unable to connect to Database")
 	}
-	rows, err := database.Read()
+	rows, err := database.Read(offset, limit)
 	if err != nil {
 		DbError(t, "Unable to read any %s data from the Database", "NVD", err)
 	}
@@ -131,4 +139,15 @@ func connectToDB(t *testing.T) *storage.DB {
 		t.Errorf("Unable to connect to Database")
 	}
 	return data
+}
+
+func TestMain(m *testing.M) {
+	database, _ := storage.Connect()
+	database.CreateGithubAdvisoriesTable()
+	database.CreateVulnerabilitiesTable()
+	database.CreateAffectedProductsTable()
+	database.CreateAffectedAdvisories()
+	database.Close()
+
+	m.Run()
 }

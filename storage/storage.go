@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"time"
 
 	"cvedashboard2.0/structs"
@@ -58,8 +57,11 @@ type DB struct {
 //  Check for connection
 
 func Connect() (*DB, error) {
-	dbEnv := os.Getenv("DATABASE_CONNECTION_STRING")
-	DBinit, err := sql.Open("sqlite3", dbEnv)
+
+	// dbEnv := os.Getenv("DATABASE_CONNECTION_STRING")
+	// DBinit, err := sql.Open("sqlite3", dbEnv)
+
+	DBinit, err := sql.Open("sqlite3", "./cvedb.db")
 	if err != nil {
 		return nil, err
 	}
@@ -148,8 +150,8 @@ func (db *DB) InsertVulnDataGithub(data []structs.GithubJson) error {
 	return nil
 }
 
-func (db *DB) Read() ([]DBVulnerabilityNVD, error) {
-	rows, err := db.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities")
+func (db *DB) Read(offset, limit int) ([]DBVulnerabilityNVD, error) {
+	rows, err := db.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -163,9 +165,9 @@ func (db *DB) Read() ([]DBVulnerabilityNVD, error) {
 
 }
 
-func (db *DB) ReadGithub() ([]DBVulnerabilityGithub, error) {
+func (db *DB) ReadGithub(offset, limit int) ([]DBVulnerabilityGithub, error) {
 	// COALESCE(cve_id, '') checks for null or no value
-	rows, err := db.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories")
+	rows, err := db.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}

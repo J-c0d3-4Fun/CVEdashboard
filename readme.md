@@ -44,13 +44,33 @@ cd CVEdashboard
 go mod download
 ```
 
-### Run
+### Setup Environment Variables
+
+```bash
+export DATABASE_CONNECTION_STRING="./cvedb.db"
+export API_KEY="your-nvd-api-key"  # Get from https://nvd.nist.gov/account/login
+export GITHUB_TOKEN="your-github-token"  # Personal access token with security_events:read
+```
+
+### Run Backend
 
 ```bash
 go run api/api.go
 ```
 
-The server starts on `http://localhost:8080`.
+The API server starts on `http://localhost:8081`.
+
+### Run Frontend
+
+Open your browser to `http://localhost:8081/` - the static files are served automatically from the `static/` directory.
+
+**Features:**
+- View homepage with latest 30 vulnerabilities from NVD and GitHub
+- Browse all vulnerabilities with pagination
+- Search NVD by product/criteria
+- Search GitHub by package name
+- Sync data from sources on-demand
+- Switch between views (Home, All NVD, All GitHub)
 
 ### API Endpoints
 
@@ -130,16 +150,28 @@ go test ./parser -v
 go test ./storage -v
 ```
 
+## Current Status
+
+✅ **Demo Ready** - All core functionality working:
+- Backend API fully operational with NVD and GitHub data
+- SQLite database with concurrent write support (WAL mode)
+- Frontend dashboard with pagination and search
+- Automated background sync for both data sources
+- Unit tests for storage layer
+
 ## Roadmap
 
 - [X] **GitHub Security Advisories** — Integrate the [GitHub Advisory Database API](https://docs.github.com/en/rest/security-advisories) as a second data source
 - [X] Pagination support for large CVE result sets
-- [ ] Filtering and search by CVE ID, severity, date range <- can currently search based on name
+- [X] Frontend dashboard UI
+- [ ] Filtering and search by CVE ID, severity, date range
 - [ ] CVSS v3.1 metric support
-- [X] Scheduled background sync (replace on-demand fetch)
-- [ ] Frontend dashboard UI
-- [ ] Add Mux handler for a router
 - [ ] Add Slack Integration 
+- [ ] Docker support
+- [ ] Improve test coverage
+
+
+
 ## License
 
 This project is open source and available under the [MIT License](LICENSE).
