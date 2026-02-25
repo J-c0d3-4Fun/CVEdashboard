@@ -211,12 +211,13 @@ func (db *DB) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
 
 }
 
-func (db *DB) FilterRequestNVD(filter string) ([]DBVulnerabilityNVD, error) {
+func (db *DB) FilterRequestNVD(filter string, offset, limit int) ([]DBVulnerabilityNVD, error) {
 
 	rows, err := db.queryDB(`SELECT v.cve_id, v.source_identifier, v.published, v.last_modified, v.description, v.base_score 
          FROM Vulnerabilities v
          JOIN AffectedProducts ap ON v.cve_id = ap.cve_id
-         WHERE ap.criteria LIKE ?`, "%"+filter+"%")
+         WHERE ap.criteria LIKE ?
+		 LIMIT ? OFFSET ?`, "%"+filter+"%", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -230,11 +231,12 @@ func (db *DB) FilterRequestNVD(filter string) ([]DBVulnerabilityNVD, error) {
 
 }
 
-func (db *DB) FilterRequestGithub(filter string) ([]DBVulnerabilityGithub, error) {
+func (db *DB) FilterRequestGithub(filter string, offset, limit int) ([]DBVulnerabilityGithub, error) {
 	rows, err := db.queryDB(`SELECT g.ghsa_id, COALESCE(g.cve_id, ''), COALESCE(g.identifier, ''), g.published, g.summary, g.description, g.severity, g.type
          FROM GithubAdvisories g
          JOIN AffectedAdvisories gh ON g.ghsa_id = gh.ghsa_id
-         WHERE gh.packageName LIKE ?`, "%"+filter+"%")
+         WHERE gh.packageName LIKE ?
+		 LIMIT ? OFFSET ?`, "%"+filter+"%", limit, offset)
 	if err != nil {
 		return nil, err
 	}
