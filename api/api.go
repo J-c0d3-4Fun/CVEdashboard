@@ -298,7 +298,13 @@ func ErrorHandler(w http.ResponseWriter, status int, msg string) {
 }
 
 func SearchNVD(w http.ResponseWriter, r *http.Request) {
+	page := pageParam(r, "page", 1)
+	limit := pageParam(r, "limit", 50)
+	offset := (page - 1) * limit
 	service := queryValidation(w, r, "service")
+	if service == "" {
+		return
+	}
 	log.Println("Connecting to DB......")
 	d, err := storage.Connect()
 	if err != nil {
@@ -307,7 +313,7 @@ func SearchNVD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer d.Close()
-	results, err := d.FilterRequestNVD(service)
+	results, err := d.FilterRequestNVD(service, offset, limit)
 	if err != nil {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
@@ -318,7 +324,13 @@ func SearchNVD(w http.ResponseWriter, r *http.Request) {
 }
 
 func SearchGithub(w http.ResponseWriter, r *http.Request) {
+	page := pageParam(r, "page", 1)
+	limit := pageParam(r, "limit", 50)
+	offset := (page - 1) * limit
 	advisory := queryValidation(w, r, "advisory")
+	if advisory == "" {
+		return
+	}
 
 	log.Println("Connecting to DB......")
 	d, err := storage.Connect()
@@ -329,7 +341,7 @@ func SearchGithub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer d.Close()
-	results, err := d.FilterRequestGithub(advisory)
+	results, err := d.FilterRequestGithub(advisory, offset, limit)
 	if err != nil {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return

@@ -130,15 +130,17 @@ async function loadAllGithub(page = 1) {
     }
 }
 
-async function searchNVD() {
+async function searchNVD(page = 1) {
+    
     const query = document.getElementById('nvdSearch').value.trim();
+    const limit = 20;
     if (!query) {
         alert('Please enter a search term');
         return;
     }
 
     try {
-        const res = await fetch(`${API_URL}/api/nvd/search?service=${encodeURIComponent(query)}`);
+        const res = await fetch(`${API_URL}/api/nvd/search?service=${encodeURIComponent(query)}&page=${page}&limit=${limit}`);
         const data = await res.json();
         
         let html = `<h2 class="text-2xl font-bold text-gray-900 mb-4">NVD Search Results for "${query}"</h2>`;
@@ -152,22 +154,41 @@ async function searchNVD() {
             html += '<p class="text-gray-500">No results found.</p>';
         }
         
+
         html += '</div>';
+
+
+
+         // Pagination controls
+        html += '<div class="mt-6 flex justify-center gap-4">';
+        if (page > 1) {
+            html += `<button onclick="searchNVD(${page - 1})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Previous</button>`;
+        }
+        html += `<span class="px-4 py-2 text-gray-700">Page ${page}</span>`;
+        if (data && data.length >= limit) {
+            html += `<button onclick="searchNVD(${page + 1})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Next</button>`;
+        }
+        html += '</div>';
+        
         document.getElementById('container').innerHTML = html;
-    } catch (err) {
+        currentPage = page;
+        currentView = 'nvd';
+        } catch (err) {
         showError('Search failed: ' + err.message);
-    }
+        }
+        
 }
 
-async function searchGithub() {
+async function searchGithub(page = 1) {
     const query = document.getElementById('githubSearch').value.trim();
+    const limit = 20;
     if (!query) {
         alert('Please enter a search term');
         return;
     }
 
     try {
-        const res = await fetch(`${API_URL}/api/github/search?advisory=${encodeURIComponent(query)}`);
+        const res = await fetch(`${API_URL}/api/github/search?advisory=${encodeURIComponent(query)}&page=${page}&limit=${limit}`);
         const data = await res.json();
         
         let html = `<h2 class="text-2xl font-bold text-gray-900 mb-4">GitHub Search Results for "${query}"</h2>`;
@@ -182,10 +203,24 @@ async function searchGithub() {
         }
         
         html += '</div>';
+        // Pagination controls
+        html += '<div class="mt-6 flex justify-center gap-4">';
+        if (page > 1) {
+            html += `<button onclick="searchGithub(${page - 1})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Previous</button>`;
+        }
+        html += `<span class="px-4 py-2 text-gray-700">Page ${page}</span>`;
+        if (data && data.length >= limit) {
+            html += `<button onclick="searchGithub(${page + 1})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Next</button>`;
+        }
+        html += '</div>';
+        
         document.getElementById('container').innerHTML = html;
-    } catch (err) {
+        currentPage = page;
+        currentView = 'github';
+        } catch (err) {
         showError('Search failed: ' + err.message);
-    }
+        }
+        
 }
 
 async function syncNVD() {
