@@ -58,9 +58,6 @@ type DB struct {
 
 func Connect() (*DB, error) {
 
-	// dbEnv := os.Getenv("DATABASE_CONNECTION_STRING")
-	// DBinit, err := sql.Open("sqlite3", dbEnv)
-
 	DBinit, err := sql.Open("sqlite3", "./cvedb.db")
 	if err != nil {
 		return nil, err
@@ -130,7 +127,7 @@ func (db *DB) InsertVulnDataGithub(data []structs.GithubJson) error {
 		}
 
 		for _, vulns := range v.Vulnerabilities {
-			_, err := db.insertDB(`INSERT OR REPLACE INTO AffectedAdvisories (ghsa_id, packageName, packageEco) VALUES (?, ?, ?)`, v.GhsaID, vulns.Package.Name, vulns.Package.Ecosystem)
+			_, err := db.insertDB(`INSERT OR REPLACE INTO AffectedAdvisories (ghsa_id, packageName, packageEco, packageVersion) VALUES (?, ?, ? ,?)`, v.GhsaID, vulns.Package.Name, vulns.Package.Ecosystem, vulns.VulnerableVersionRange)
 			if err != nil {
 				return fmt.Errorf("failed to insert advisory package %s: %w", vulns.Package.Name, err)
 			}
@@ -211,13 +208,17 @@ func (db *DB) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
 
 }
 
-func (db *DB) FilterRequestNVD(filter string, offset, limit int) ([]DBVulnerabilityNVD, error) {
+func (db *DB) FilterRequestNVD(filter, version string, offset, limit int) ([]DBVulnerabilityNVD, error) {
+	query := `SELECT v.cve_id, v.source_identifier, v.published, v.last_modified, v.description, v.base_score
+	     FROM Vulnerabilities v
+	     JOIN AffectedProducts ap ON v.cve_id = ap.cve_id
+	     WHERE ap.criteria LIKE ?`
+	newQuery, args, err := argsParams(filter, version, query, offset, limit)
+	if err != nil {
+		return []DBVulnerabilityNVD{}, err
+	}
 
-	rows, err := db.queryDB(`SELECT v.cve_id, v.source_identifier, v.published, v.last_modified, v.description, v.base_score 
-         FROM Vulnerabilities v
-         JOIN AffectedProducts ap ON v.cve_id = ap.cve_id
-         WHERE ap.criteria LIKE ?
-		 LIMIT ? OFFSET ?`, "%"+filter+"%", limit, offset)
+	rows, err := db.queryDB(newQuery, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -231,12 +232,23 @@ func (db *DB) FilterRequestNVD(filter string, offset, limit int) ([]DBVulnerabil
 
 }
 
-func (db *DB) FilterRequestGithub(filter string, offset, limit int) ([]DBVulnerabilityGithub, error) {
-	rows, err := db.queryDB(`SELECT g.ghsa_id, COALESCE(g.cve_id, ''), COALESCE(g.identifier, ''), g.published, g.summary, g.description, g.severity, g.type
+func (db *DB) FilterRequestGithub(filter string, version string, offset, limit int) ([]DBVulnerabilityGithub, error) {
+	query := `SELECT g.ghsa_id, COALESCE(g.cve_id, ''), COALESCE(g.identifier, ''), g.published, g.summary, g.description, g.severity, g.type
          FROM GithubAdvisories g
          JOIN AffectedAdvisories gh ON g.ghsa_id = gh.ghsa_id
-         WHERE gh.packageName LIKE ?
-		 LIMIT ? OFFSET ?`, "%"+filter+"%", limit, offset)
+         WHERE gh.packageName LIKE ?`
+
+	newQuery, args, err := argsParamsGithub(filter, version, query, offset, limit)
+	if err != nil {
+		return []DBVulnerabilityGithub{}, err
+	}
+	rows, err := db.queryDB(newQuery, args...)
+
+	// rows, err := db.queryDB(`SELECT g.ghsa_id, COALESCE(g.cve_id, ''), COALESCE(g.identifier, ''), g.published, g.summary, g.description, g.severity, g.type
+	//      FROM GithubAdvisories g
+	//      JOIN AffectedAdvisories gh ON g.ghsa_id = gh.ghsa_id
+	//      WHERE gh.packageName LIKE ?
+	// 	 LIMIT ? OFFSET ?`, "%"+filter+"%", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -262,4 +274,26 @@ func scanAll[T any](rows *sql.Rows, fn func(*sql.Rows) (T, error)) ([]T, error) 
 	}
 
 	return results, rows.Err()
+}
+
+func argsParams(filter, version, query string, offset, limit int) (string, []interface{}, error) {
+	args := []interface{}{"%" + filter + "%"}
+	if version != "" {
+		query += `And ap.criteria LIKE ?`
+		args = append(args, "%"+version+"%")
+	}
+	query += `LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+	return query, args, nil
+}
+
+func argsParamsGithub(filter, version, query string, offset, limit int) (string, []interface{}, error) {
+	args := []interface{}{"%" + filter + "%"}
+	if version != "" {
+		query += `And gh.packageVersion LIKE ?`
+		args = append(args, "%"+version+"%")
+	}
+	query += `LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+	return query, args, nil
 }

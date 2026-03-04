@@ -43,6 +43,7 @@ func (db *DB) CreateAffectedAdvisories() error {
     ghsa_id      TEXT,
     packageName  TEXT,
     packageEco   TEXT,
+    packageVersion TEXT,
     PRIMARY KEY (ghsa_id, packageName),
     FOREIGN KEY (ghsa_id) REFERENCES GithubAdvisories(ghsa_id)
 )`)

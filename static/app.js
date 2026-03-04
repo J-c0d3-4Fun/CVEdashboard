@@ -1,6 +1,8 @@
 const API_URL = 'http://localhost:8081';
 let currentPage = 1;
 let currentView = 'home';
+let isSearching = false;
+let isGithubSearching = false;
 
 // Load homepage on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -131,16 +133,21 @@ async function loadAllGithub(page = 1) {
 }
 
 async function searchNVD(page = 1) {
+    if (isSearching) return;
+    isSearching = true;
     
-    const query = document.getElementById('nvdSearch').value.trim();
-    const limit = 20;
+    // const query = document.getElementById('nvdSearch').value.trim();
+    const searchInput = document.getElementById('nvdSearch').value.trim();
+    const [query, version] = searchInput.split(':');
+    const limit = 50;
     if (!query) {
         alert('Please enter a search term');
+        isSearching = false;
         return;
     }
 
     try {
-        const res = await fetch(`${API_URL}/api/nvd/search?service=${encodeURIComponent(query)}&page=${page}&limit=${limit}`);
+        const res = await fetch(`${API_URL}/api/nvd/search?service=${encodeURIComponent(query)}&version=${encodeURIComponent(version || '')}&page=${page}&limit=${limit}`);
         const data = await res.json();
         
         let html = `<h2 class="text-2xl font-bold text-gray-900 mb-4">NVD Search Results for "${query}"</h2>`;
@@ -173,22 +180,28 @@ async function searchNVD(page = 1) {
         document.getElementById('container').innerHTML = html;
         currentPage = page;
         currentView = 'nvd';
-        } catch (err) {
+    } catch (err) {
         showError('Search failed: ' + err.message);
-        }
-        
+    } finally {
+        isSearching = false;
+    }
 }
 
 async function searchGithub(page = 1) {
-    const query = document.getElementById('githubSearch').value.trim();
+    if (isGithubSearching) return;
+    isGithubSearching = true;
+
+    const searchInput = document.getElementById('githubSearch').value.trim();
+    const [query, version] = searchInput.split(':');
     const limit = 20;
     if (!query) {
         alert('Please enter a search term');
+        isGithubSearching = false;
         return;
     }
 
     try {
-        const res = await fetch(`${API_URL}/api/github/search?advisory=${encodeURIComponent(query)}&page=${page}&limit=${limit}`);
+        const res = await fetch(`${API_URL}/api/github/search?advisory=${encodeURIComponent(query)}&version=${encodeURIComponent(version || '')}&page=${page}&limit=${limit}`);
         const data = await res.json();
         
         let html = `<h2 class="text-2xl font-bold text-gray-900 mb-4">GitHub Search Results for "${query}"</h2>`;
@@ -217,9 +230,11 @@ async function searchGithub(page = 1) {
         document.getElementById('container').innerHTML = html;
         currentPage = page;
         currentView = 'github';
-        } catch (err) {
+    } catch (err) {
         showError('Search failed: ' + err.message);
-        }
+    } finally {
+        isGithubSearching = false;
+    }
         
 }
 
