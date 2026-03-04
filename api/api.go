@@ -313,7 +313,8 @@ func SearchNVD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer d.Close()
-	results, err := d.FilterRequestNVD(service, offset, limit)
+	version := r.URL.Query().Get("version")
+	results, err := d.FilterRequestNVD(service, version, offset, limit)
 	if err != nil {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
@@ -341,7 +342,8 @@ func SearchGithub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer d.Close()
-	results, err := d.FilterRequestGithub(advisory, offset, limit)
+	version := r.URL.Query().Get("version")
+	results, err := d.FilterRequestGithub(advisory, version, offset, limit)
 	if err != nil {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
