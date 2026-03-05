@@ -149,6 +149,7 @@ func main() {
 	http.HandleFunc("GET /api/home", homePage)
 	http.HandleFunc("GET /api/sync/github", SyncButtonGithub)
 	http.HandleFunc("GET /api/sync/nvd", SyncButtonNVD)
+	http.HandleFunc("GET /api/heatmap", getHeatMap)
 	log.Println("Listening and serving HTTP on", port)
 	http.Handle("/", http.FileServer(http.Dir("./static")))
 
@@ -426,4 +427,10 @@ func pageParam(r *http.Request, name string, defaultVal int) int {
 	}
 	return defaultVal
 
+}
+
+func getHeatMap(w http.ResponseWriter, r *http.Request) {
+	data, _ := storage.Connect()
+	d, _ := data.GetHeatMapData()
+	WriteJSON(w, http.StatusOK, d)
 }

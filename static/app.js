@@ -7,6 +7,7 @@ let isGithubSearching = false;
 // Load homepage on page load
 document.addEventListener('DOMContentLoaded', () => {
     loadHomepage();
+    loadHeatmap();
 });
 
 async function loadHomepage() {
@@ -150,7 +151,7 @@ async function searchNVD(page = 1) {
         const res = await fetch(`${API_URL}/api/nvd/search?service=${encodeURIComponent(query)}&version=${encodeURIComponent(version || '')}&page=${page}&limit=${limit}`);
         const data = await res.json();
         
-        let html = `<h2 class="text-2xl font-bold text-gray-900 mb-4">NVD Search Results for "${query}"</h2>`;
+        let html = `<h2 class="text-2xl font-bold text-gray-900 mb-4">NVD Search Results for "${query}:v${version || ''}"</h2>`;
         html += '<div class="space-y-3">';
         
         if (data && data.length > 0) {
@@ -204,7 +205,7 @@ async function searchGithub(page = 1) {
         const res = await fetch(`${API_URL}/api/github/search?advisory=${encodeURIComponent(query)}&version=${encodeURIComponent(version || '')}&page=${page}&limit=${limit}`);
         const data = await res.json();
         
-        let html = `<h2 class="text-2xl font-bold text-gray-900 mb-4">GitHub Search Results for "${query}"</h2>`;
+        let html = `<h2 class="text-2xl font-bold text-gray-900 mb-4">GitHub Search Results for "${query}:v${version || ''}"</h2>`;
         html += '<div class="space-y-3">';
         
         if (data && data.length > 0) {
@@ -391,4 +392,57 @@ function showError(message) {
             <p class="text-sm">${escapeHtml(message)}</p>
         </div>
     `;
+}
+
+// Load heatmap
+async function loadHeatmap() {
+    try {
+        const res = await fetch(`${API_URL}/api/heatmap`);
+        const data = await res.json();
+        
+        const ctx = document.getElementById('heatmapChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bubble',
+            data: {
+                datasets: [{
+                    label: 'Vulnerability Severity',
+                    data: data.map(p => ({
+                        x: p.x,
+                        y: p.y,
+                        r: Math.max(p.y, 5),
+                        cve: p.cve,
+                        description: p.description,
+                        published: p.published
+                    })),
+                    backgroundColor: data.map(p => {
+                        if (p.y >= 9) return 'rgba(255, 0, 0, 0.7)'; // Red
+                        if (p.y >= 7) return 'rgba(255, 127, 0, 0.7)'; // Orange
+                        if (p.y >= 4) return 'rgba(255, 255, 0, 0.7)'; // Yellow
+                        return 'rgba(0, 255, 0, 0.7)'; // Green
+                    })
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: (context) => context[0].raw.cve,
+                            label: (context) => `Score: ${context.raw.y.toFixed(1)}`,
+                            afterLabel: (context) => [
+                                `Published: ${new Date(context.raw.published).toISOString().split('T')[0]}`,
+                                `${context.raw.description}`
+                            ]
+                        },
+                        padding: 12,
+                        backgroundColor: 'rgba(0,0,0,0.8)',
+                        displayColors: false
+                    }
+                }
+            }
+        });
+    } catch (err) {
+        console.error('Failed to load heatmap: ' + err.message);
+    }
 }
