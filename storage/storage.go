@@ -148,7 +148,7 @@ func (db *DB) InsertVulnDataGithub(data []structs.GithubJson) error {
 }
 
 func (db *DB) Read(offset, limit int) ([]DBVulnerabilityNVD, error) {
-	rows, err := db.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities LIMIT ? OFFSET ?", limit, offset)
+	rows, err := db.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (db *DB) Read(offset, limit int) ([]DBVulnerabilityNVD, error) {
 
 func (db *DB) ReadGithub(offset, limit int) ([]DBVulnerabilityGithub, error) {
 	// COALESCE(cve_id, '') checks for null or no value
-	rows, err := db.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories LIMIT ? OFFSET ?", limit, offset)
+	rows, err := db.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func (db *DB) ReadGithub(offset, limit int) ([]DBVulnerabilityGithub, error) {
 }
 
 func (db *DB) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
-	rows, err := db.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories LIMIT 30")
+	rows, err := db.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories ORDER BY published DESC LIMIT 30")
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func (db *DB) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
 }
 
 func (db *DB) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
-	rows, err := db.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities LIMIT 30")
+	rows, err := db.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities ORDER BY published DESC LIMIT 30")
 	if err != nil {
 		return nil, err
 	}
@@ -244,11 +244,6 @@ func (db *DB) FilterRequestGithub(filter string, version string, offset, limit i
 	}
 	rows, err := db.queryDB(newQuery, args...)
 
-	// rows, err := db.queryDB(`SELECT g.ghsa_id, COALESCE(g.cve_id, ''), COALESCE(g.identifier, ''), g.published, g.summary, g.description, g.severity, g.type
-	//      FROM GithubAdvisories g
-	//      JOIN AffectedAdvisories gh ON g.ghsa_id = gh.ghsa_id
-	//      WHERE gh.packageName LIKE ?
-	// 	 LIMIT ? OFFSET ?`, "%"+filter+"%", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +277,7 @@ func argsParams(filter, version, query string, offset, limit int) (string, []int
 		query += `And ap.criteria LIKE ?`
 		args = append(args, "%"+version+"%")
 	}
-	query += `LIMIT ? OFFSET ?`
+	query += ` ORDER BY v.published DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 	return query, args, nil
 }
@@ -293,7 +288,44 @@ func argsParamsGithub(filter, version, query string, offset, limit int) (string,
 		query += `And gh.packageVersion LIKE ?`
 		args = append(args, "%"+version+"%")
 	}
-	query += `LIMIT ? OFFSET ?`
+	query += `ORDER BY g.published DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 	return query, args, nil
+}
+
+func (db *DB) GetHeatMapData() ([]map[string]interface{}, error) {
+	rows, err := db.queryDB(`
+		SELECT strftime('%Y', published), base_score, cve_id, description, published FROM Vulnerabilities
+		WHERE published IS NOT NULL
+		ORDER BY published
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var data []map[string]interface{}
+	for rows.Next() {
+		var year string
+		var score float64
+		var cveID string
+		var description string
+		var published string
+		if err := rows.Scan(&year, &score, &cveID, &description, &published); err != nil {
+			return nil, err
+		}
+		// Truncate description for tooltip
+		if len(description) > 150 {
+			description = description[:150] + "..."
+		}
+		data = append(data, map[string]interface{}{
+			"x":           year,
+			"y":           score,
+			"cve":         cveID,
+			"description": description,
+			"published":   published,
+		})
+	}
+	return data, rows.Err()
+
 }

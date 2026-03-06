@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CVE Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-gray-50">
     <div class="min-h-screen">
@@ -56,6 +57,12 @@
                     <button onclick="syncGithub()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">Sync GitHub</button>
                     <span id="syncStatus" class="text-sm text-gray-600 self-center"></span>
                 </div>
+            </div>
+
+            <!-- Heatmap -->
+            <div class="bg-white rounded-lg shadow p-6 mb-8">
+                <h2 class="text-2xl font-bold text-gray-900 mb-4">Vulnerability Heatmap</h2>
+                <canvas id="heatmapChart"></canvas>
             </div>
 
             <!-- Vulnerabilities -->
