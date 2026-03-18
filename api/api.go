@@ -170,21 +170,21 @@ func AutoSyncNVDData() {
 	for {
 		body, err := client.FetchCVEs(context.Background(), startIndex, 2000)
 		if err != nil {
-			fmt.Printf("fetch error at index %d: %v\n", startIndex, err)
+			log.Printf("fetch error at index %d: %v\n", startIndex, err)
 			break
 		}
 		data, err := parser.Unmarshal[structs.NvdJson](body)
 		if err != nil {
-			fmt.Printf("unmarshal error: %v\n", err)
+			log.Printf("unmarshal error: %v\n", err)
 			break
 		}
 		db, err := storage.Connect()
 		if err != nil {
-			fmt.Printf("db connect error: %v\n", err)
+			log.Printf("db connect error: %v\n", err)
 			break
 		}
 		if err := db.InsertVulnDataNVD(&data); err != nil {
-			fmt.Printf("insert error: %v\n", err)
+			log.Printf("insert error: %v\n", err)
 		}
 		db.Close()
 		fmt.Printf("nvd data synced %d/%d\n", startIndex+len(data.Vulnerabilities), data.TotalResults)
@@ -193,7 +193,7 @@ func AutoSyncNVDData() {
 			break
 		}
 	}
-	fmt.Println("NVD sync complete")
+	log.Println("NVD sync complete")
 }
 
 func AutoSyncGithubData() {
@@ -203,12 +203,12 @@ func AutoSyncGithubData() {
 	for {
 		body, next, err := client.FetchGithubAdvisories(context.Background(), nextURL)
 		if err != nil {
-			fmt.Printf("fetch error: %v", err)
+			log.Printf("fetch error: %v", err)
 			break
 		}
 		data, err := parser.Unmarshal[[]structs.GithubJson](body)
 		if err != nil {
-			fmt.Printf("marshaler error: %v", err)
+			log.Printf("marshaler error: %v", err)
 			break
 		}
 		if len(data) == 0 {
@@ -216,12 +216,12 @@ func AutoSyncGithubData() {
 		}
 		db, err := storage.Connect()
 		if err != nil {
-			fmt.Printf("db connect error: %v", err)
+			log.Printf("db connect error: %v", err)
 			break
 		}
 		err1 := db.InsertVulnDataGithub(data)
 		if err1 != nil {
-			fmt.Printf("insert error: %v", err1)
+			log.Printf("insert error: %v", err1)
 			break
 		}
 		db.Close()
@@ -232,7 +232,7 @@ func AutoSyncGithubData() {
 			break
 		}
 	}
-	fmt.Println("GitHub sync complete")
+	log.Println("GitHub sync complete")
 }
 
 func getVulns(w http.ResponseWriter, r *http.Request) {
@@ -381,10 +381,26 @@ func homePage(w http.ResponseWriter, r *http.Request) {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	var (
+		lastNVDSync struct {
+			Status string
+			Error  string
+			Time   time.Time
+		}
+		lastGithubSync struct {
+			Status string
+			Error  string
+			Time   time.Time
+		}
+	)
 
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"github": githubResult,
 		"nvd":    nvdResult,
+		"sync": map[string]any{
+			"nvd":    lastNVDSync,
+			"github": lastGithubSync,
+		},
 	})
 
 }

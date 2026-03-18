@@ -2,3 +2,4 @@
 IMPROVEMENTS_LIST.md
 *.db
 .env*
+cvedb.*
