@@ -56,6 +56,7 @@ export GITHUB_TOKEN="your-github-token"  # Personal access token with security_e
 
 ```bash
 go run api/api.go
+direnv exec . go run api/api.go 
 ```
 
 The API server starts on `http://localhost:8081`.

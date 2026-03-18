@@ -16,6 +16,15 @@ async function loadHomepage() {
         const data = await res.json();
         
         let html = '<div class="grid grid-cols-1 lg:grid-cols-2 gap-8">';
+        if (data.sync) {
+            if (data.sync.nvd.status === 'error') {
+                console.warn('NVD sync error:', data.sync.nvd.error);
+            }
+            if (data.sync.github.status === 'error') {
+                console.warn('GitHub sync error:', data.sync.github.error);
+            }
+        }
+
         
         // NVD Section
         html += '<div>';
@@ -83,6 +92,10 @@ async function loadAllNVD(page = 1) {
         document.getElementById('container').innerHTML = html;
         currentPage = page;
         currentView = 'nvd';
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
     } catch (err) {
         showError('Failed to load NVD data: ' + err.message);
     }
@@ -128,6 +141,11 @@ async function loadAllGithub(page = 1) {
         document.getElementById('container').innerHTML = html;
         currentPage = page;
         currentView = 'github';
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
+
     } catch (err) {
         showError('Failed to load GitHub data: ' + err.message);
     }
@@ -181,6 +199,11 @@ async function searchNVD(page = 1) {
         document.getElementById('container').innerHTML = html;
         currentPage = page;
         currentView = 'nvd';
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
+
     } catch (err) {
         showError('Search failed: ' + err.message);
     } finally {
@@ -231,6 +254,10 @@ async function searchGithub(page = 1) {
         document.getElementById('container').innerHTML = html;
         currentPage = page;
         currentView = 'github';
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
     } catch (err) {
         showError('Search failed: ' + err.message);
     } finally {
