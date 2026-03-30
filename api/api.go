@@ -131,16 +131,6 @@ func main() {
 	pool := storage.NewConnectionPool(5)
 	defer pool.Close()
 
-	db, err := storage.Connect()
-	if err != nil {
-		log.Fatal(err)
-	}
-	db.CreateVulnerabilitiesTable()
-	db.CreateAffectedAdvisories()
-	db.CreateGithubAdvisoriesTable()
-	db.CreateAffectedProductsTable()
-	db.CreateAffectedAdvisories()
-	db.Close()
 
 	port := ":8081"
 	// Setup the routes
@@ -181,7 +171,7 @@ func AutoSyncNVDData() {
 			log.Printf("unmarshal error: %v\n", err)
 			break
 		}
-		db, err := storage.Connect()
+		db, err := 
 		if err != nil {
 			log.Printf("db connect error: %v\n", err)
 			break
