@@ -1,7 +1,7 @@
 package storage
 
-func (db *DB) CreateGithubAdvisoriesTable() error {
-	_, err := db.insertDB(`CREATE TABLE IF NOT EXISTS GithubAdvisories (
+func (pool *ConnectionPool) CreateGithubAdvisoriesTable() error {
+	_, err := pool.insertDB(`CREATE TABLE IF NOT EXISTS GithubAdvisories (
         ghsa_id TEXT PRIMARY KEY,
         cve_id TEXT,
         identifier TEXT,
@@ -14,8 +14,8 @@ func (db *DB) CreateGithubAdvisoriesTable() error {
 	return err
 
 }
-func (db *DB) CreateVulnerabilitiesTable() error {
-	_, err := db.insertDB(`CREATE TABLE IF NOT EXISTS Vulnerabilities (
+func (pool *ConnectionPool) CreateVulnerabilitiesTable() error {
+	_, err := pool.insertDB(`CREATE TABLE IF NOT EXISTS Vulnerabilities (
     cve_id    TEXT PRIMARY KEY,
     source_identifier TEXT,
     published         TEXT,
@@ -27,8 +27,8 @@ func (db *DB) CreateVulnerabilitiesTable() error {
 
 }
 
-func (db *DB) CreateAffectedProductsTable() error {
-	_, err := db.insertDB(`CREATE TABLE IF NOT EXISTS AffectedProducts (
+func (pool *ConnectionPool) CreateAffectedProductsTable() error {
+	_, err := pool.insertDB(`CREATE TABLE IF NOT EXISTS AffectedProducts (
     cve_id     TEXT,
     criteria   TEXT,
     vulnerable BOOLEAN,
@@ -38,8 +38,8 @@ func (db *DB) CreateAffectedProductsTable() error {
 	return err
 }
 
-func (db *DB) CreateAffectedAdvisories() error {
-	_, err := db.insertDB(`CREATE TABLE IF NOT EXISTS AffectedAdvisories (
+func (pool *ConnectionPool) CreateAffectedAdvisories() error {
+	_, err := pool.insertDB(`CREATE TABLE IF NOT EXISTS AffectedAdvisories (
     ghsa_id      TEXT,
     packageName  TEXT,
     packageEco   TEXT,

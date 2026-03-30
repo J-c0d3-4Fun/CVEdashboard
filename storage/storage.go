@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"time"
 
 	"cvedashboard2.0/structs"
 	_ "github.com/mattn/go-sqlite3"
@@ -54,25 +53,6 @@ type DB struct {
 	conn *sql.DB
 }
 
-//  Check for connection
-
-func Connect() (*DB, error) {
-
-	DBinit, err := sql.Open("sqlite3", "./cvedb.db")
-	if err != nil {
-		return nil, err
-	}
-	// WAL mode lets readers and writers operate concurrently on SQLite
-	// was having issues witht eh goroutines trying to write to Db at the same time
-	DBinit.Exec("PRAGMA journal_mode=WAL")
-
-	DBinit.SetMaxOpenConns(25)
-	DBinit.SetMaxIdleConns(25)
-	DBinit.SetConnMaxLifetime(5 * time.Minute)
-
-	return &DB{conn: DBinit}, nil
-}
-
 type ConnectionPool struct {
 	connections chan *sql.DB
 	maxSize     int
@@ -110,18 +90,19 @@ func (p *ConnectionPool) Close() error {
 	return nil
 }
 
-func (db *DB) Close() error {
-	return db.conn.Close()
+func (pool *ConnectionPool) queryDB(query string, args ...interface{}) (*sql.Rows, error) {
+	dbConn := pool.Get()
+	defer pool.Release(dbConn)
+	return dbConn.Query(query, args...)
 }
 
-func (db *DB) queryDB(query string, args ...interface{}) (*sql.Rows, error) {
-	return db.conn.Query(query, args...)
+func (pool *ConnectionPool) insertDB(query string, args ...interface{}) (sql.Result, error) {
+	dbConn := pool.Get()
+	defer pool.Release(dbConn)
+	return dbConn.Exec(query, args...)
 }
 
-func (db *DB) insertDB(query string, args ...interface{}) (sql.Result, error) {
-	return db.conn.Exec(query, args...)
-}
-func (db *DB) InsertVulnDataNVD(data *structs.NvdJson) error {
+func (pool *ConnectionPool) InsertVulnDataNVD(data *structs.NvdJson) error {
 	for _, v := range data.Vulnerabilities {
 		desc := ""
 		if len(v.Cve.Descriptions) > 0 {
@@ -134,7 +115,7 @@ func (db *DB) InsertVulnDataNVD(data *structs.NvdJson) error {
 		for _, config := range v.Cve.Configurations {
 			for _, node := range config.Nodes {
 				for _, cpe := range node.CpeMatch {
-					db.insertDB(
+					pool.insertDB(
 						`INSERT OR REPLACE INTO AffectedProducts (cve_id, criteria, vulnerable) VALUES (?, ?, ?)`,
 						v.Cve.ID, cpe.Criteria, cpe.Vulnerable,
 					)
@@ -142,7 +123,7 @@ func (db *DB) InsertVulnDataNVD(data *structs.NvdJson) error {
 			}
 		}
 
-		_, err := db.insertDB(
+		_, err := pool.insertDB(
 			`INSERT OR REPLACE INTO Vulnerabilities 
 			(cve_id, source_identifier, published, last_modified, description, base_score) 
 			VALUES (?, ?, ?, ?, ?, ?)`,
@@ -156,7 +137,7 @@ func (db *DB) InsertVulnDataNVD(data *structs.NvdJson) error {
 	return nil
 }
 
-func (db *DB) InsertVulnDataGithub(data []structs.GithubJson) error {
+func (pool *ConnectionPool) InsertVulnDataGithub(data []structs.GithubJson) error {
 	for _, v := range data {
 		identifier := ""
 		if len(v.Identifiers) > 0 {
@@ -164,13 +145,13 @@ func (db *DB) InsertVulnDataGithub(data []structs.GithubJson) error {
 		}
 
 		for _, vulns := range v.Vulnerabilities {
-			_, err := db.insertDB(`INSERT OR REPLACE INTO AffectedAdvisories (ghsa_id, packageName, packageEco, packageVersion) VALUES (?, ?, ? ,?)`, v.GhsaID, vulns.Package.Name, vulns.Package.Ecosystem, vulns.VulnerableVersionRange)
+			_, err := pool.insertDB(`INSERT OR REPLACE INTO AffectedAdvisories (ghsa_id, packageName, packageEco, packageVersion) VALUES (?, ?, ? ,?)`, v.GhsaID, vulns.Package.Name, vulns.Package.Ecosystem, vulns.VulnerableVersionRange)
 			if err != nil {
 				return fmt.Errorf("failed to insert advisory package %s: %w", vulns.Package.Name, err)
 			}
 		}
 
-		_, err := db.insertDB(
+		_, err := pool.insertDB(
 			`INSERT OR REPLACE INTO GithubAdvisories 
 			(ghsa_id, cve_id, identifier, published, summary, description, severity, type) 
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -184,8 +165,8 @@ func (db *DB) InsertVulnDataGithub(data []structs.GithubJson) error {
 	return nil
 }
 
-func (db *DB) Read(offset, limit int) ([]DBVulnerabilityNVD, error) {
-	rows, err := db.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
+func (pool *ConnectionPool) Read(offset, limit int) ([]DBVulnerabilityNVD, error) {
+	rows, err := pool.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -199,9 +180,9 @@ func (db *DB) Read(offset, limit int) ([]DBVulnerabilityNVD, error) {
 
 }
 
-func (db *DB) ReadGithub(offset, limit int) ([]DBVulnerabilityGithub, error) {
+func (pool *ConnectionPool) ReadGithub(offset, limit int) ([]DBVulnerabilityGithub, error) {
 	// COALESCE(cve_id, '') checks for null or no value
-	rows, err := db.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
+	rows, err := pool.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -215,8 +196,8 @@ func (db *DB) ReadGithub(offset, limit int) ([]DBVulnerabilityGithub, error) {
 
 }
 
-func (db *DB) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
-	rows, err := db.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories ORDER BY published DESC LIMIT 30")
+func (pool *ConnectionPool) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
+	rows, err := pool.queryDB("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories ORDER BY published DESC LIMIT 30")
 	if err != nil {
 		return nil, err
 	}
@@ -230,8 +211,8 @@ func (db *DB) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
 
 }
 
-func (db *DB) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
-	rows, err := db.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities ORDER BY published DESC LIMIT 30")
+func (pool *ConnectionPool) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
+	rows, err := pool.queryDB("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities ORDER BY published DESC LIMIT 30")
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +226,7 @@ func (db *DB) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
 
 }
 
-func (db *DB) FilterRequestNVD(filter, version string, offset, limit int) ([]DBVulnerabilityNVD, error) {
+func (pool *ConnectionPool) FilterRequestNVD(filter, version string, offset, limit int) ([]DBVulnerabilityNVD, error) {
 	query := `SELECT v.cve_id, v.source_identifier, v.published, v.last_modified, v.description, v.base_score
 	     FROM Vulnerabilities v
 	     JOIN AffectedProducts ap ON v.cve_id = ap.cve_id
@@ -255,7 +236,7 @@ func (db *DB) FilterRequestNVD(filter, version string, offset, limit int) ([]DBV
 		return []DBVulnerabilityNVD{}, err
 	}
 
-	rows, err := db.queryDB(newQuery, args...)
+	rows, err := pool.queryDB(newQuery, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +250,7 @@ func (db *DB) FilterRequestNVD(filter, version string, offset, limit int) ([]DBV
 
 }
 
-func (db *DB) FilterRequestGithub(filter string, version string, offset, limit int) ([]DBVulnerabilityGithub, error) {
+func (pool *ConnectionPool) FilterRequestGithub(filter string, version string, offset, limit int) ([]DBVulnerabilityGithub, error) {
 	query := `SELECT g.ghsa_id, COALESCE(g.cve_id, ''), COALESCE(g.identifier, ''), g.published, g.summary, g.description, g.severity, g.type
          FROM GithubAdvisories g
          JOIN AffectedAdvisories gh ON g.ghsa_id = gh.ghsa_id
@@ -279,7 +260,7 @@ func (db *DB) FilterRequestGithub(filter string, version string, offset, limit i
 	if err != nil {
 		return []DBVulnerabilityGithub{}, err
 	}
-	rows, err := db.queryDB(newQuery, args...)
+	rows, err := pool.queryDB(newQuery, args...)
 
 	if err != nil {
 		return nil, err
@@ -330,8 +311,8 @@ func argsParamsGithub(filter, version, query string, offset, limit int) (string,
 	return query, args, nil
 }
 
-func (db *DB) GetHeatMapData() ([]map[string]interface{}, error) {
-	rows, err := db.queryDB(`
+func (pool *ConnectionPool) GetHeatMapData() ([]map[string]interface{}, error) {
+	rows, err := pool.queryDB(`
 		SELECT strftime('%Y', published), base_score, cve_id, description, published FROM Vulnerabilities
 		WHERE published IS NOT NULL
 		ORDER BY published
