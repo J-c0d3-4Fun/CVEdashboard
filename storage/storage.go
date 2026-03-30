@@ -58,7 +58,7 @@ type ConnectionPool struct {
 	maxSize     int
 }
 
-func NewConnectionPool(maxSize int) *ConnectionPool {
+func NewConnectionPool(maxSize int) (*ConnectionPool, error) {
 	// create the connection
 	pool := &ConnectionPool{
 		connections: make(chan *sql.DB, maxSize),
@@ -66,11 +66,14 @@ func NewConnectionPool(maxSize int) *ConnectionPool {
 	}
 
 	for i := 0; i < maxSize; i++ {
-		db, _ := sql.Open("sqlite3", "./cvedb.db")
+		db, err := sql.Open("sqlite3", "./cvedb.db")
+		if err != nil {
+			return nil, err
+		}
 		db.Exec("PRAGMA journal_mode=WAL")
 		pool.connections <- db
 	}
-	return pool
+	return pool, nil
 
 }
 
@@ -90,22 +93,19 @@ func (p *ConnectionPool) Close() error {
 	return nil
 }
 
-// func (pool *ConnectionPool) queryDB(query string, args ...interface{}) (*sql.Rows, error) {
-// dbConn := pool.Get()
-// defer pool.Release(dbConn)
-// 	return dbConn.Query(query, args...)
-// }
-
-// func (pool *ConnectionPool) insertDB(query string, args ...interface{}) (sql.Result, error) {
-// 	dbConn := pool.Get()
-// 	defer pool.Release(dbConn)
-// 	return dbConn.Exec(query, args...)
-// }
-
-func (pool *ConnectionPool) InsertVulnDataNVD(data *structs.NvdJson) error {
+func (pool *ConnectionPool) queryDB(query string, args ...interface{}) (*sql.Rows, error) {
 	dbConn := pool.Get()
 	defer pool.Release(dbConn)
+	return dbConn.Query(query, args...)
+}
 
+func (pool *ConnectionPool) insertDB(query string, args ...interface{}) (sql.Result, error) {
+	dbConn := pool.Get()
+	defer pool.Release(dbConn)
+	return dbConn.Exec(query, args...)
+}
+
+func (pool *ConnectionPool) InsertVulnDataNVD(data *structs.NvdJson) error {
 	for _, v := range data.Vulnerabilities {
 		desc := ""
 		if len(v.Cve.Descriptions) > 0 {
@@ -118,15 +118,18 @@ func (pool *ConnectionPool) InsertVulnDataNVD(data *structs.NvdJson) error {
 		for _, config := range v.Cve.Configurations {
 			for _, node := range config.Nodes {
 				for _, cpe := range node.CpeMatch {
-					dbConn.Exec(
+					_, err := pool.insertDB(
 						`INSERT OR REPLACE INTO AffectedProducts (cve_id, criteria, vulnerable) VALUES (?, ?, ?)`,
 						v.Cve.ID, cpe.Criteria, cpe.Vulnerable,
 					)
+					if err != nil {
+						return fmt.Errorf("failed to insert affected product: %w", err)
+					}
 				}
 			}
 		}
 
-		_, err := dbConn.Exec(
+		_, err := pool.insertDB(
 			`INSERT OR REPLACE INTO Vulnerabilities 
 			(cve_id, source_identifier, published, last_modified, description, base_score) 
 			VALUES (?, ?, ?, ?, ?, ?)`,
@@ -141,8 +144,6 @@ func (pool *ConnectionPool) InsertVulnDataNVD(data *structs.NvdJson) error {
 }
 
 func (pool *ConnectionPool) InsertVulnDataGithub(data []structs.GithubJson) error {
-	dbConn := pool.Get()
-	defer pool.Release(dbConn)
 	for _, v := range data {
 		identifier := ""
 		if len(v.Identifiers) > 0 {
@@ -150,13 +151,13 @@ func (pool *ConnectionPool) InsertVulnDataGithub(data []structs.GithubJson) erro
 		}
 
 		for _, vulns := range v.Vulnerabilities {
-			_, err := dbConn.Exec(`INSERT OR REPLACE INTO AffectedAdvisories (ghsa_id, packageName, packageEco, packageVersion) VALUES (?, ?, ? ,?)`, v.GhsaID, vulns.Package.Name, vulns.Package.Ecosystem, vulns.VulnerableVersionRange)
+			_, err := pool.insertDB(`INSERT OR REPLACE INTO AffectedAdvisories (ghsa_id, packageName, packageEco, packageVersion) VALUES (?, ?, ? ,?)`, v.GhsaID, vulns.Package.Name, vulns.Package.Ecosystem, vulns.VulnerableVersionRange)
 			if err != nil {
 				return fmt.Errorf("failed to insert advisory package %s: %w", vulns.Package.Name, err)
 			}
 		}
 
-		_, err := dbConn.Exec(
+		_, err := pool.insertDB(
 			`INSERT OR REPLACE INTO GithubAdvisories 
 			(ghsa_id, cve_id, identifier, published, summary, description, severity, type) 
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
