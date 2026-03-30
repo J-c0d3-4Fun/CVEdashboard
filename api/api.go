@@ -130,7 +130,8 @@ var pool *storage.ConnectionPool
 
 func main() {
 	var err error
-	pool, err := storage.NewConnectionPool(5)
+
+	pool, err = storage.NewConnectionPool(5)
 	if err != nil {
 		log.Fatal(err)
 	}
