@@ -73,6 +73,43 @@ func Connect() (*DB, error) {
 	return &DB{conn: DBinit}, nil
 }
 
+type ConnectionPool struct {
+	connections chan *sql.DB
+	maxSize     int
+}
+
+func NewConnectionPool(maxSize int) *ConnectionPool {
+	// create the connection
+	pool := &ConnectionPool{
+		connections: make(chan *sql.DB, maxSize),
+		maxSize:     maxSize,
+	}
+
+	for i := 0; i < maxSize; i++ {
+		db, _ := sql.Open("sqlite3", "./cvedb.db")
+		db.Exec("PRAGMA journal_mode=WAL")
+		pool.connections <- db
+	}
+	return pool
+
+}
+
+func (p *ConnectionPool) Get() *sql.DB {
+	return <-p.connections // reuse existing connection
+}
+
+func (p *ConnectionPool) Release(db *sql.DB) {
+	p.connections <- db // return to pool
+}
+
+func (p *ConnectionPool) Close() error {
+	close(p.connections)
+	for db := range p.connections {
+		db.Close()
+	}
+	return nil
+}
+
 func (db *DB) Close() error {
 	return db.conn.Close()
 }

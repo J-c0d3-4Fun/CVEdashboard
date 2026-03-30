@@ -128,6 +128,9 @@ func parseNextLink(linkHeader string) string {
 
 func main() {
 
+	pool := storage.NewConnectionPool(5)
+	defer pool.Close()
+
 	db, err := storage.Connect()
 	if err != nil {
 		log.Fatal(err)
