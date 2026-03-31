@@ -8,8 +8,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"cvedashboard2.0/middleware"
@@ -153,12 +155,33 @@ func main() {
 
 	pathLogging := middleware.PathLogging(http.DefaultServeMux)
 
+	// Graceful shutdown
+
+	server := &http.Server{
+		Addr:    port,
+		Handler: pathLogging,
+	}
+
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+
+		log.Println("Shutting down server...")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("Shutdown error: %v", err)
+		}
+	}()
+
 	go AutoSyncNVDData()
 
 	go AutoSyncGithubData()
 
 	// everything must be before this line or it will not run
-	log.Fatal(http.ListenAndServe(port, pathLogging))
+	log.Fatal(server.ListenAndServe())
 
 }
 
