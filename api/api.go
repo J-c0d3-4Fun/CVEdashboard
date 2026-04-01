@@ -8,8 +8,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"cvedashboard2.0/middleware"
@@ -126,18 +128,29 @@ func parseNextLink(linkHeader string) string {
 	return ""
 }
 
-func main() {
+var pool *storage.ConnectionPool
 
-	db, err := storage.Connect()
+func main() {
+	var err error
+
+	pool, err = storage.NewConnectionPool(5)
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.CreateVulnerabilitiesTable()
-	db.CreateAffectedAdvisories()
-	db.CreateGithubAdvisoriesTable()
-	db.CreateAffectedProductsTable()
-	db.CreateAffectedAdvisories()
-	db.Close()
+	// Initialize tables
+	if err := pool.CreateVulnerabilitiesTable(); err != nil {
+		log.Fatal(err)
+	}
+	if err := pool.CreateAffectedProductsTable(); err != nil {
+		log.Fatal(err)
+	}
+	if err := pool.CreateGithubAdvisoriesTable(); err != nil {
+		log.Fatal(err)
+	}
+	if err := pool.CreateAffectedAdvisories(); err != nil {
+		log.Fatal(err)
+	}
+	defer pool.Close()
 
 	port := ":8081"
 	// Setup the routes
@@ -155,12 +168,33 @@ func main() {
 
 	pathLogging := middleware.PathLogging(http.DefaultServeMux)
 
+	// Graceful shutdown
+
+	server := &http.Server{
+		Addr:    port,
+		Handler: pathLogging,
+	}
+
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+
+		log.Println("Shutting down server...")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("Shutdown error: %v", err)
+		}
+	}()
+
 	go AutoSyncNVDData()
 
 	go AutoSyncGithubData()
 
 	// everything must be before this line or it will not run
-	log.Fatal(http.ListenAndServe(port, pathLogging))
+	log.Fatal(server.ListenAndServe())
 
 }
 
@@ -178,15 +212,9 @@ func AutoSyncNVDData() {
 			log.Printf("unmarshal error: %v\n", err)
 			break
 		}
-		db, err := storage.Connect()
-		if err != nil {
-			log.Printf("db connect error: %v\n", err)
-			break
-		}
-		if err := db.InsertVulnDataNVD(&data); err != nil {
+		if err := pool.InsertVulnDataNVD(&data); err != nil {
 			log.Printf("insert error: %v\n", err)
 		}
-		db.Close()
 		fmt.Printf("nvd data synced %d/%d\n", startIndex+len(data.Vulnerabilities), data.TotalResults)
 		startIndex += 2000
 		if startIndex >= data.TotalResults {
@@ -214,17 +242,11 @@ func AutoSyncGithubData() {
 		if len(data) == 0 {
 			break
 		}
-		db, err := storage.Connect()
-		if err != nil {
-			log.Printf("db connect error: %v", err)
-			break
-		}
-		err1 := db.InsertVulnDataGithub(data)
+		err1 := pool.InsertVulnDataGithub(data)
 		if err1 != nil {
 			log.Printf("insert error: %v", err1)
 			break
 		}
-		db.Close()
 		fmt.Printf("github advisories synced page %d: %d advisories\n", page, len(data))
 		page++
 		nextURL = next
@@ -240,20 +262,12 @@ func getVulns(w http.ResponseWriter, r *http.Request) {
 	limit := pageParam(r, "limit", 50)
 	offset := (page - 1) * limit
 
-	d, err := storage.Connect()
-	log.Println("Connecting to DB......")
+	i, err := pool.Read(offset, limit)
 	if err != nil {
 		log.Printf("DB Error: %s", err)
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	i, err := d.Read(offset, limit)
-	if err != nil {
-		log.Printf("DB Error: %s", err)
-		ErrorHandler(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer d.Close()
 
 	WriteJSON(w, http.StatusOK, i)
 }
@@ -263,20 +277,12 @@ func getVulnsGithub(w http.ResponseWriter, r *http.Request) {
 	limit := pageParam(r, "limit", 50)
 	offset := (page - 1) * limit
 
-	d, err := storage.Connect()
-	log.Println("Connecting to DB......")
+	i, err := pool.ReadGithub(offset, limit)
 	if err != nil {
 		log.Printf("DB Error: %s", err)
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	i, err := d.ReadGithub(offset, limit)
-	if err != nil {
-		log.Printf("DB Error: %s", err)
-		ErrorHandler(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer d.Close()
 
 	WriteJSON(w, http.StatusOK, i)
 
@@ -307,15 +313,8 @@ func SearchNVD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Println("Connecting to DB......")
-	d, err := storage.Connect()
-	if err != nil {
-		log.Printf("DB Error: %s", err)
-		ErrorHandler(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer d.Close()
 	version := r.URL.Query().Get("version")
-	results, err := d.FilterRequestNVD(service, version, offset, limit)
+	results, err := pool.FilterRequestNVD(service, version, offset, limit)
 	if err != nil {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
@@ -335,16 +334,8 @@ func SearchGithub(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Println("Connecting to DB......")
-	d, err := storage.Connect()
-
-	if err != nil {
-		log.Printf("DB Error: %s", err)
-		ErrorHandler(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer d.Close()
 	version := r.URL.Query().Get("version")
-	results, err := d.FilterRequestGithub(advisory, version, offset, limit)
+	results, err := pool.FilterRequestGithub(advisory, version, offset, limit)
 	if err != nil {
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
@@ -361,21 +352,15 @@ func SearchGithub(w http.ResponseWriter, r *http.Request) {
 // heat map
 
 func homePage(w http.ResponseWriter, r *http.Request) {
-	d, err := storage.Connect()
-	if err != nil {
-		log.Printf("DB Error: %s", err)
-		ErrorHandler(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer d.Close()
-	githubResult, err := d.ReadHomepageGithub()
+
+	githubResult, err := pool.ReadHomepageGithub()
 	if err != nil {
 		log.Printf("DB Error: %s", err)
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	nvdResult, err := d.ReadHomepageNVd()
+	nvdResult, err := pool.ReadHomepageNVd()
 	if err != nil {
 		log.Printf("DB Error: %s", err)
 		ErrorHandler(w, http.StatusInternalServerError, err.Error())
@@ -438,15 +423,26 @@ func pageParam(r *http.Request, name string, defaultVal int) int {
 		return defaultVal
 	}
 	intVal, err := strconv.Atoi(val)
-	if err == nil {
-		return intVal
+	if err != nil {
+		return defaultVal
 	}
-	return defaultVal
 
+	// Validate: page >= 1, limit > 0 and <= 1000
+	if name == "page" && intVal < 1 {
+		return 1
+	}
+	if name == "limit" {
+		if intVal < 1 {
+			return 1
+		}
+		if intVal > 1000 {
+			return 1000
+		}
+	}
+	return intVal
 }
 
 func getHeatMap(w http.ResponseWriter, r *http.Request) {
-	data, _ := storage.Connect()
-	d, _ := data.GetHeatMapData()
+	d, _ := pool.GetHeatMapData()
 	WriteJSON(w, http.StatusOK, d)
 }

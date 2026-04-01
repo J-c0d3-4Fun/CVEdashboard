@@ -10,18 +10,30 @@ import (
 type ResponseWriter struct {
 	http.ResponseWriter
 	statusCode int
+	written    bool
 }
 
-func (rw ResponseWriter) StatusCode(code int) {
-	rw.statusCode = code
-	rw.ResponseWriter.WriteHeader(code)
+func (rw *ResponseWriter) WriteHeader(code int) {
+	if !rw.written {
+
+		rw.statusCode = code
+		rw.ResponseWriter.WriteHeader(code)
+		rw.written = true
+	}
+
 }
 
+func (rw *ResponseWriter) Write(b []byte) (int, error) {
+	if !rw.written {
+		rw.WriteHeader(http.StatusOK)
+	}
+	return rw.ResponseWriter.Write(b)
+}
 func PathLogging(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		writer := &ResponseWriter{w, http.StatusOK}
+		writer := &ResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 		handler.ServeHTTP(writer, r)
 
