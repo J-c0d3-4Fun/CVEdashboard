@@ -349,6 +349,7 @@ function renderVulnerabilityNVD(vuln) {
                 <p><strong>Source:</strong> ${escapeHtml(vuln.SourceIdentifier)}</p>
                 <p><strong>Published:</strong> ${new Date(vuln.Published).toLocaleDateString()}</p>
                 <p><strong>Last Modified:</strong> ${new Date(vuln.LastModified).toLocaleDateString()}</p>
+                ${vuln.URL ? `<p><strong>Reference:</strong> <a href="${escapeHtml(vuln.URL)}" target="_blank" class="text-blue-600 hover:underline">View Details</a></p>` : ''}
             </div>
         </div>
     `;
@@ -374,6 +375,8 @@ function renderVulnerabilityGithub(advisory) {
             <div class="text-xs text-gray-500">
                 <p><strong>Type:</strong> ${escapeHtml(advisory.Type)}</p>
                 <p><strong>Published:</strong> ${new Date(advisory.Published).toLocaleDateString()}</p>
+                ${advisory.URL ? `<p><strong>Reference:</strong> <a href="${escapeHtml(advisory.URL)}" target="_blank" class="text-blue-600 hover:underline">View Details</a></p>` : ''}
+
             </div>
         </div>
     `;

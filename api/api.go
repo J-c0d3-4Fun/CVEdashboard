@@ -137,6 +137,19 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Initialize tables
+	if err := pool.CreateVulnerabilitiesTable(); err != nil {
+		log.Fatal(err)
+	}
+	if err := pool.CreateAffectedProductsTable(); err != nil {
+		log.Fatal(err)
+	}
+	if err := pool.CreateGithubAdvisoriesTable(); err != nil {
+		log.Fatal(err)
+	}
+	if err := pool.CreateAffectedAdvisories(); err != nil {
+		log.Fatal(err)
+	}
 	defer pool.Close()
 
 	port := ":8081"
@@ -410,11 +423,23 @@ func pageParam(r *http.Request, name string, defaultVal int) int {
 		return defaultVal
 	}
 	intVal, err := strconv.Atoi(val)
-	if err == nil {
-		return intVal
+	if err != nil {
+		return defaultVal
 	}
-	return defaultVal
 
+	// Validate: page >= 1, limit > 0 and <= 1000
+	if name == "page" && intVal < 1 {
+		return 1
+	}
+	if name == "limit" {
+		if intVal < 1 {
+			return 1
+		}
+		if intVal > 1000 {
+			return 1000
+		}
+	}
+	return intVal
 }
 
 func getHeatMap(w http.ResponseWriter, r *http.Request) {

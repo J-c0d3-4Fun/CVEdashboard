@@ -9,7 +9,8 @@ func (pool *ConnectionPool) CreateGithubAdvisoriesTable() error {
         summary TEXT,
         description TEXT,
         severity TEXT,
-        type TEXT
+        type TEXT,
+        url TEXT
     )`)
 	return err
 
@@ -21,7 +22,8 @@ func (pool *ConnectionPool) CreateVulnerabilitiesTable() error {
     published         TEXT,
     last_modified     TEXT,
     description       TEXT,
-    base_score        REAL
+    base_score        REAL,
+    url               TEXT
     )`)
 	return err
 
@@ -32,6 +34,7 @@ func (pool *ConnectionPool) CreateAffectedProductsTable() error {
     cve_id     TEXT,
     criteria   TEXT,
     vulnerable BOOLEAN,
+    url TEXT,
     PRIMARY KEY (cve_id, criteria),
     FOREIGN KEY (cve_id) REFERENCES Vulnerabilities(cve_id)
 )`)
@@ -44,6 +47,7 @@ func (pool *ConnectionPool) CreateAffectedAdvisories() error {
     packageName  TEXT,
     packageEco   TEXT,
     packageVersion TEXT,
+    url TEXT,
     PRIMARY KEY (ghsa_id, packageName),
     FOREIGN KEY (ghsa_id) REFERENCES GithubAdvisories(ghsa_id)
 )`)

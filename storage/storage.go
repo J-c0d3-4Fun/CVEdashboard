@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"strings"
+
 	"cvedashboard2.0/structs"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -37,6 +39,7 @@ type DBVulnerabilityNVD struct {
 	LastModified     string
 	Description      string
 	BaseScore        float64
+	URL              string
 }
 type DBVulnerabilityGithub struct {
 	GHSAID      string
@@ -47,6 +50,7 @@ type DBVulnerabilityGithub struct {
 	Description string
 	Severity    string
 	Type        string
+	URL         string
 }
 
 type DB struct {
@@ -112,6 +116,20 @@ func (pool *ConnectionPool) InsertVulnDataNVD(data *structs.NvdJson) error {
 			desc = v.Cve.Descriptions[0].Value
 		}
 		var baseScore float64
+		var url string
+		if len(v.Cve.References) > 0 {
+			// Find NVD official reference
+			for _, ref := range v.Cve.References {
+				if strings.Contains(ref.URL, "nvd.nist.gov") {
+					url = ref.URL
+					break
+				}
+			}
+			// Fallback to first if no NVD found
+			if url == "" {
+				url = v.Cve.References[0].URL
+			}
+		}
 		if len(v.Cve.Metrics.CvssMetricV2) > 0 {
 			baseScore = v.Cve.Metrics.CvssMetricV2[0].CvssData.BaseScore
 		}
@@ -119,8 +137,8 @@ func (pool *ConnectionPool) InsertVulnDataNVD(data *structs.NvdJson) error {
 			for _, node := range config.Nodes {
 				for _, cpe := range node.CpeMatch {
 					_, err := pool.insertDB(
-						`INSERT OR REPLACE INTO AffectedProducts (cve_id, criteria, vulnerable) VALUES (?, ?, ?)`,
-						v.Cve.ID, cpe.Criteria, cpe.Vulnerable,
+						`INSERT OR REPLACE INTO AffectedProducts (cve_id, criteria, vulnerable, url) VALUES (?, ?, ?, ?)`,
+						v.Cve.ID, cpe.Criteria, cpe.Vulnerable, url,
 					)
 					if err != nil {
 						return fmt.Errorf("failed to insert affected product: %w", err)
@@ -131,10 +149,10 @@ func (pool *ConnectionPool) InsertVulnDataNVD(data *structs.NvdJson) error {
 
 		_, err := pool.insertDB(
 			`INSERT OR REPLACE INTO Vulnerabilities 
-			(cve_id, source_identifier, published, last_modified, description, base_score) 
-			VALUES (?, ?, ?, ?, ?, ?)`,
+			(cve_id, source_identifier, published, last_modified, description, base_score, url) 
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			v.Cve.ID, v.Cve.SourceIdentifier, v.Cve.Published,
-			v.Cve.LastModified, desc, baseScore,
+			v.Cve.LastModified, desc, baseScore, url,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert %s: %w", v.Cve.ID, err)
@@ -151,18 +169,19 @@ func (pool *ConnectionPool) InsertVulnDataGithub(data []structs.GithubJson) erro
 		}
 
 		for _, vulns := range v.Vulnerabilities {
-			_, err := pool.insertDB(`INSERT OR REPLACE INTO AffectedAdvisories (ghsa_id, packageName, packageEco, packageVersion) VALUES (?, ?, ? ,?)`, v.GhsaID, vulns.Package.Name, vulns.Package.Ecosystem, vulns.VulnerableVersionRange)
+			_, err := pool.insertDB(`INSERT OR REPLACE INTO AffectedAdvisories (ghsa_id, packageName, packageEco, packageVersion, url) VALUES (?, ?, ? ,?, ?)`, v.GhsaID, vulns.Package.Name, vulns.Package.Ecosystem, vulns.VulnerableVersionRange, v.HTMLURL)
 			if err != nil {
 				return fmt.Errorf("failed to insert advisory package %s: %w", vulns.Package.Name, err)
 			}
 		}
 
+		url := fmt.Sprintf("https://github.com/advisories/%s", v.GhsaID)
 		_, err := pool.insertDB(
 			`INSERT OR REPLACE INTO GithubAdvisories 
-			(ghsa_id, cve_id, identifier, published, summary, description, severity, type) 
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			(ghsa_id, cve_id, identifier, published, summary, description, severity, type, url) 
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			v.GhsaID, v.CveID, identifier, v.PublishedAt.Format("2006-01-02T15:04:05"),
-			v.Summary, v.Description, v.Severity, v.Type,
+			v.Summary, v.Description, v.Severity, v.Type, url,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to insert %s: %w", v.GhsaID, err)
@@ -174,7 +193,7 @@ func (pool *ConnectionPool) InsertVulnDataGithub(data []structs.GithubJson) erro
 func (pool *ConnectionPool) Read(offset, limit int) ([]DBVulnerabilityNVD, error) {
 	dbConn := pool.Get()
 	defer pool.Release(dbConn)
-	rows, err := dbConn.Query("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
+	rows, err := dbConn.Query("SELECT cve_id, source_identifier, published, last_modified, description, base_score, url FROM Vulnerabilities ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +201,7 @@ func (pool *ConnectionPool) Read(offset, limit int) ([]DBVulnerabilityNVD, error
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityNVD, error) {
 		var v DBVulnerabilityNVD
-		err := r.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		err := r.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore, &v.URL)
 		return v, err
 	})
 
@@ -193,7 +212,7 @@ func (pool *ConnectionPool) ReadGithub(offset, limit int) ([]DBVulnerabilityGith
 	dbConn := pool.Get()
 	defer pool.Release(dbConn)
 	// COALESCE(cve_id, '') checks for null or no value
-	rows, err := dbConn.Query("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
+	rows, err := dbConn.Query("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type, url FROM GithubAdvisories ORDER BY published DESC LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +220,7 @@ func (pool *ConnectionPool) ReadGithub(offset, limit int) ([]DBVulnerabilityGith
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityGithub, error) {
 		var v DBVulnerabilityGithub
-		err := r.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
+		err := r.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type, &v.URL)
 		return v, err
 	})
 
@@ -210,7 +229,7 @@ func (pool *ConnectionPool) ReadGithub(offset, limit int) ([]DBVulnerabilityGith
 func (pool *ConnectionPool) ReadHomepageGithub() ([]DBVulnerabilityGithub, error) {
 	dbConn := pool.Get()
 	defer pool.Release(dbConn)
-	rows, err := dbConn.Query("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type FROM GithubAdvisories ORDER BY published DESC LIMIT 30")
+	rows, err := dbConn.Query("SELECT ghsa_id, COALESCE(cve_id, ''), COALESCE(identifier, ''), published, summary, description, severity, type, url FROM GithubAdvisories ORDER BY published DESC LIMIT 30")
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +237,7 @@ func (pool *ConnectionPool) ReadHomepageGithub() ([]DBVulnerabilityGithub, error
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityGithub, error) {
 		var v DBVulnerabilityGithub
-		err := r.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
+		err := r.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type, &v.URL)
 		return v, err
 	})
 
@@ -227,7 +246,7 @@ func (pool *ConnectionPool) ReadHomepageGithub() ([]DBVulnerabilityGithub, error
 func (pool *ConnectionPool) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
 	dbConn := pool.Get()
 	defer pool.Release(dbConn)
-	rows, err := dbConn.Query("SELECT cve_id, source_identifier, published, last_modified, description, base_score FROM Vulnerabilities ORDER BY published DESC LIMIT 30")
+	rows, err := dbConn.Query("SELECT cve_id, source_identifier, published, last_modified, description, base_score, url FROM Vulnerabilities ORDER BY published DESC LIMIT 30")
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +254,7 @@ func (pool *ConnectionPool) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityNVD, error) {
 		var v DBVulnerabilityNVD
-		err := r.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		err := r.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore, &v.URL)
 		return v, err
 	})
 
@@ -244,7 +263,7 @@ func (pool *ConnectionPool) ReadHomepageNVd() ([]DBVulnerabilityNVD, error) {
 func (pool *ConnectionPool) FilterRequestNVD(filter, version string, offset, limit int) ([]DBVulnerabilityNVD, error) {
 	dbConn := pool.Get()
 	defer pool.Release(dbConn)
-	query := `SELECT v.cve_id, v.source_identifier, v.published, v.last_modified, v.description, v.base_score
+	query := `SELECT v.cve_id, v.source_identifier, v.published, v.last_modified, v.description, v.base_score, v.url
 	     FROM Vulnerabilities v
 	     JOIN AffectedProducts ap ON v.cve_id = ap.cve_id
 	     WHERE ap.criteria LIKE ?`
@@ -261,7 +280,7 @@ func (pool *ConnectionPool) FilterRequestNVD(filter, version string, offset, lim
 
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityNVD, error) {
 		var v DBVulnerabilityNVD
-		err := r.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore)
+		err := r.Scan(&v.CVEID, &v.SourceIdentifier, &v.Published, &v.LastModified, &v.Description, &v.BaseScore, &v.URL)
 		return v, err
 	})
 
@@ -270,8 +289,8 @@ func (pool *ConnectionPool) FilterRequestNVD(filter, version string, offset, lim
 func (pool *ConnectionPool) FilterRequestGithub(filter string, version string, offset, limit int) ([]DBVulnerabilityGithub, error) {
 	dbConn := pool.Get()
 	defer pool.Release(dbConn)
-	query := `SELECT g.ghsa_id, COALESCE(g.cve_id, ''), COALESCE(g.identifier, ''), g.published, g.summary, g.description, g.severity, g.type
-         FROM GithubAdvisories g
+	query := `SELECT g.ghsa_id, COALESCE(g.cve_id, ''), COALESCE(g.identifier, ''), g.published, g.summary, g.description, g.severity, g.type, g.url
+	FROM GithubAdvisories g
          JOIN AffectedAdvisories gh ON g.ghsa_id = gh.ghsa_id
          WHERE gh.packageName LIKE ?`
 
@@ -289,7 +308,7 @@ func (pool *ConnectionPool) FilterRequestGithub(filter string, version string, o
 	return scanAll(rows, func(r *sql.Rows) (DBVulnerabilityGithub, error) {
 
 		var v DBVulnerabilityGithub
-		err := r.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type)
+		err := r.Scan(&v.GHSAID, &v.CVEID, &v.Identifier, &v.Published, &v.Summary, &v.Description, &v.Severity, &v.Type, &v.URL)
 		return v, err
 	})
 
