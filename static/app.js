@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:8081';
+const API_URL = window.location.origin;
 let currentPage = 1;
 let currentView = 'home';
 let isSearching = false;
