@@ -13,12 +13,12 @@ RUN CGO_ENABLED=1 GOOS=linux go build -v -o /usr/local/bin/app ./api
 
 FROM alpine:3.21
 
-WORKDIR /
+WORKDIR /app
 
 RUN apk add --no-cache ca-certificates sqlite-libs
 
-COPY --from=builder /usr/local/bin/app /app
-COPY static /static
+COPY --from=builder /usr/local/bin/app .
+COPY static ./static
 
 EXPOSE 8081
-CMD ["/app"]
+CMD ["./app"]
